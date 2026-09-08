@@ -1,56 +1,17 @@
+# CI override. The base compose file already uses named volumes, so this only has to
+# stop services from publishing host ports (shared runners collide on them).
 services:
-  uvicorn_trt_server:
+  api:
     ports: []
-    volumes:
-      - person_images:/home/triton-server/src/app/person_images
-
+  triton:
+    ports: []
   standalone:
     ports: []
-    volumes:
-      - milvus_data:/var/lib/milvus
-
   attu:
     ports: []
-
   mysql:
     ports: []
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./app/static/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-
   mysql-admin:
     ports: []
-
   redis-server:
     ports: []
-    volumes:
-      - redis_data:/data
-
-  etcd:
-    volumes:
-      - etcd_data:/etcd
-
-  minio:
-    volumes:
-      - minio_data:/minio_data
-
-  pytest:
-    environment:
-      DOWNLOAD_CACHE_PATH: /tmp/.data
-      DOWNLOAD_IMAGE_PATH: /tmp/person_images
-      LOG_STORAGE_PATH: /tmp/server_logs
-      PYTHONDONTWRITEBYTECODE: "1"
-    command: >
-      bash -c "
-        pip install -r requirements.txt &&
-        pip install -r tests/requirements.txt &&
-        pytest tests -v --tb=short -p no:cacheprovider
-      "
-
-volumes:
-  person_images:
-  milvus_data:
-  mysql_data:
-  redis_data:
-  etcd_data:
-  minio_data:

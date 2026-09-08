@@ -47,7 +47,7 @@ def select_person_data_from_sql_with_id(mysql_conn, mysql_tb, person_id: int) ->
             person_data = cursor.fetchone()
             if person_data is None:
                 logger.warning("mysql record with id: %s does not exist ❌.", person_id)
-                return {"status": "failed", "message": "mysql record with id: {person_id} does not exist"}
+                return {"status": "failed", "message": f"mysql record with id: {person_id} does not exist"}
             logger.info("Person with id: %s retrieved from mysql db.✅️", person_id)
             return {
                 "status": "success",

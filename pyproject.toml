@@ -13,7 +13,7 @@ dependencies = [
     "httpx==0.28.1",
     "opencv-python-headless==4.12.0.88",
     "pillow (>=12.1.1,<13.0.0)",
-    "pymilvus==2.6.0",
+    "pymilvus==2.6.17",
     "PyMySQL==1.1.1",
     "python-multipart (>=0.0.22,<0.0.23)",
     "redis==6.4.0",
@@ -69,3 +69,26 @@ select = [
     "T20", # no print statements
     "N",   # naming conventions
 ]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection markers are *designed* to be evaluated in argument
+# defaults, so B008 is a false positive for them.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Query",
+    "fastapi.Body",
+    "fastapi.Header",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# stdout IS the interface for a CLI script, and pytest captures prints deliberately
+"**/scripts/*.py" = ["T201"]
+"**/tests/*.py" = ["T201"]
+"**/tests/**/*.py" = ["T201"]
+# Standalone research scripts, not part of the served app. `HE` (homomorphic
+# encryption context) and `X` (feature matrix) are the conventional spellings in
+# their respective fields; renaming them would make the code harder to follow.
+"**/scripts/homomorphic_emb_face_search_knn.py" = ["T201", "N803", "N806"]
+"**/scripts/train_spoofed_face_vector_clsf.py" = ["T201", "N803", "N812"]

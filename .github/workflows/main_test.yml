@@ -67,9 +67,9 @@ jobs:
         run: |
           mkdir -p volumes/person_images
           docker compose -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci down -v
-          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci up -d uvicorn_trt_server etcd minio standalone attu mysql mysql-admin redis-server
+          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci up -d api triton etcd minio standalone attu mysql mysql-admin redis-server
           # Wait for services to be healthy
-          services=("etcd" "minio" "mysql" "redis-server" "standalone" "uvicorn_trt_server")
+          services=("etcd" "minio" "mysql" "redis-server" "standalone" "triton" "api")
           for service in "${services[@]}"; do
             cid=$(docker compose -p face_reg_ci ps -q "$service")
             if [ -z "$cid" ]; then

@@ -1,15 +1,20 @@
 """
-Main fastapi server file
+Main fastapi server file.
+
+Run it with the standard ASGI entrypoint, from the directory that contains `app/`:
+
+    uvicorn app.server:app --host 0.0.0.0 --port 8080          # prod
+    uvicorn app.server:app --reload                            # dev
+
+Do not run `python app/server.py`: that puts `app/` itself on sys.path instead of
+its parent, so `import app` fails.
 """
 
-import argparse
 import logging
-import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-import uvicorn
-from config import FASTAPI_SERVER_PORT
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -18,8 +23,10 @@ from fastapi.staticfiles import StaticFiles
 from app import inference
 from app.routes import person, recognize_person, register_person
 
-# logging
 logger = logging.getLogger("server")
+
+# resolved from this file, not the process cwd, so the app runs from any directory
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 @asynccontextmanager
@@ -34,7 +41,7 @@ async def lifespan(app: FastAPI):
 def get_application(title="Face Registration and Recognition"):
     """Gets FastAPI application object with CORS enabled."""
     fastapi_app = FastAPI(title=title, version="1.0.0", lifespan=lifespan)
-    fastapi_app.mount("/static", StaticFiles(directory="./app/static"), name="static")
+    fastapi_app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     fastapi_app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -54,10 +61,9 @@ app.include_router(register_person.router)
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
     """Adds an X-Process-Time header to the response indicating the api request processing time."""
-    start_time = time.time()
+    start_time = time.perf_counter()
     response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(process_time)
+    response.headers["X-Process-Time"] = str(time.perf_counter() - start_time)
     return response
 
 
@@ -69,28 +75,11 @@ async def index():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint to verify server is running."""
+    """Liveness probe. Says the process is up, not that its dependencies are."""
     return {"status": "healthy"}
 
 
 @app.get("/favicon.ico")
 async def favicon():
     """Favicon endpoint. Returns the favicon."""
-    file_name = "favicon.ico"
-    file_path = os.path.join(app.root_path, "app/static", file_name)
-    return FileResponse(path=file_path)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser("""Start FastAPI with uvicorn server hosting inference models""")
-    parser.add_argument("-ip", "--host_ip", type=str, default="0.0.0.0", help="host ip address. (default: %(default)s)")
-    parser.add_argument(
-        "-p", "--port", type=int, default=FASTAPI_SERVER_PORT, help="uvicorn port number. (default: %(default)s)"
-    )
-    parser.add_argument(
-        "-w", "--workers", type=int, default=1, help="number of uvicorn workers. (default: %(default)s)"
-    )
-    args = parser.parse_args()
-
-    logger.info("Uvicorn server running on %s:%s with %s workers", args.host_ip, args.port, args.workers)
-    uvicorn.run("server:app", host=args.host_ip, port=args.port, workers=args.workers, reload=True, reload_dirs=["app"])
+    return FileResponse(path=STATIC_DIR / "favicon.ico")

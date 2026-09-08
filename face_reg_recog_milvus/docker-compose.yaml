@@ -1,27 +1,43 @@
+name: face-reg-recog
+
 services:
-  uvicorn_trt_server:
-    image: uvicorn_trt_server
+  api:
     build:
       context: ./
       dockerfile: ./Dockerfile
+    image: face-reg-recog-api
     env_file: ./.env
-    shm_size: 2gb
-    ulimits:
-      stack: 67108864
-      memlock: -1
+    # `environment` wins over `env_file`, so .env can hold localhost defaults that make
+    # a locally-run `uvicorn app.server:app` work, while the container gets the
+    # compose service names. No /etc/hosts editing required either way.
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      REDIS_HOST: redis-server
+      REDIS_PORT: 6379
+      MILVUS_HOST: standalone
+      MILVUS_PORT: 19530
+      TRITON_SERVER_HOST: triton
+      TRITON_SERVER_PORT: 8001
+      DOWNLOAD_CACHE_PATH: /data/cache
+      DOWNLOAD_IMAGE_PATH: /data/person_images
+      LOG_STORAGE_PATH: /data/logs
+      # active detector/recogniser pair; both must be present in the Triton model repo
+      FACE_DETECTOR: ${FACE_DETECTOR:-scrfd_10g}
+      FACE_RECOGNIZER: ${FACE_RECOGNIZER:-arcface_r50}
     ports:
-      - ${FASTAPI_SERVER_PORT}:8080
-      - ${TRITON_SERVER_PORT}:8081
+      - ${FASTAPI_SERVER_PORT:-8080}:8080
     volumes:
-      - type: bind
-        source: ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/person_images
-        target: /home/triton-server/src/app/person_images
+      - person_images:/data/person_images
+      - server_logs:/data/logs
     depends_on:
       mysql:
         condition: service_healthy
       standalone:
         condition: service_healthy
       redis-server:
+        condition: service_healthy
+      triton:
         condition: service_healthy
     healthcheck:
       test:
@@ -34,32 +50,76 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  triton:
+    # Stock upstream image, no build step. The only reason a derived image existed was
+    # to add opencv for the face_detection_0204_postprocess python-backend model; that
+    # model is gone -- every model is now plain onnxruntime, and detection decoding and
+    # alignment happen in the api service.
+    image: nvcr.io/nvidia/tritonserver:25.02-py3
+    shm_size: 2gb
+    ulimits:
+      stack: 67108864
+      memlock: -1
+    # Triton's own default ports: 8000 http, 8001 grpc, 8002 metrics.
+    # HTTP is enabled purely so the KServe v2 readiness endpoint can drive the
+    # healthcheck; only the gRPC port is published.
+    command: >
+      tritonserver
+      --model-repository=/models
+      --allow-grpc=true --grpc-port=8001
+      --allow-http=true --http-port=8000
+      --allow-metrics=false --allow-gpu-metrics=false
+    ports:
+      - ${TRITON_SERVER_PORT:-8001}:8001
+    volumes:
+      # bind-mounted, not COPYed: swapping model weights needs no image rebuild
+      - ./app/triton_server/models:/models:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/v2/health/ready')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
 
   etcd:
-    image: quay.io/coreos/etcd:v3.5.5
+    # etcd and minio are pinned to whatever the chosen Milvus release ships in its
+    # own standalone compose file, NOT to their latest upstream tags. Milvus only
+    # tests against these.
+    image: quay.io/coreos/etcd:v3.5.25
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
       - ETCD_SNAPSHOT_COUNT=50000
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    # exec form, not CMD-SHELL: the etcd image is distroless and has no /bin/sh
     healthcheck:
-      test: [ "CMD-SHELL", "ETCDCTL_API=3 etcdctl endpoint health" ]
+      test: [ "CMD", "etcdctl", "endpoint", "health" ]
       interval: 10s
-      timeout: 5s
+      timeout: 20s
       retries: 12
 
   minio:
-    image: minio/minio:RELEASE.2023-09-23T03-47-50Z
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
     expose:
       - 9001
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
+      - minio_data:/minio_data
     command: minio server /minio_data --console-address ":9001"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
@@ -68,15 +128,15 @@ services:
       retries: 3
 
   standalone:
-    image: milvusdb/milvus:v2.4.11
+    image: milvusdb/milvus:v2.6.22
     command: [ "milvus", "run", "standalone" ]
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
+      - milvus_data:/var/lib/milvus
     ports:
-      - ${MILVUS_PORT}:19530
+      - ${MILVUS_PORT:-19530}:19530
     depends_on:
       - "etcd"
       - "minio"
@@ -87,77 +147,92 @@ services:
       retries: 12
 
   attu:
-    image: zilliz/attu:v2.4
+    image: zilliz/attu:v2.6.5
     environment:
-      MILVUS_URL: standalone:${MILVUS_PORT}
+      MILVUS_URL: standalone:19530
     ports:
-      - ${ATTU_PORT}:3000
+      - ${ATTU_PORT:-3000}:3000
     depends_on:
       - "standalone"
 
   mysql:
-    image: mariadb:10.7
-    restart: always
+    image: mariadb:11.8
+    restart: unless-stopped
     ports:
-      - ${MYSQL_PORT}:3306
+      - ${MYSQL_PORT:-3306}:3306
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/store:/var/lib/mysql
-      - ./app/static/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql_data:/var/lib/mysql
+      - ./app/static/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     mem_limit: 512m
     environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_USER=${MYSQL_USER}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-      - PMA_ARBITRARY=1
-      - PMA_HOST=${PMA_HOST}
-      - PMA_PORT=${PMA_PORT}
-      - PMA_USER=${PMA_USER}
-      - PMA_PASSWORD=${PMA_PASSWORD}
+      - MARIADB_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MARIADB_DATABASE=${MYSQL_DATABASE}
+      - MARIADB_USER=${MYSQL_USER}
+      - MARIADB_PASSWORD=${MYSQL_PASSWORD}
     healthcheck:
-      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
+      test: [ "CMD", "healthcheck.sh", "--connect", "--innodb_initialized" ]
+      interval: 10s
       timeout: 20s
       retries: 10
 
   mysql-admin:
-    image: phpmyadmin/phpmyadmin
-    restart: always
+    image: phpmyadmin:5.2
+    restart: unless-stopped
     ports:
-      - ${PMA_GUI_PORT}:80
+      - ${PMA_GUI_PORT:-8001}:80
     mem_limit: 512m
     depends_on:
       - mysql
     environment:
-      - PMA_HOST=${PMA_HOST}
-      - PMA_PORT=${PMA_PORT}
-      - PMA_USER=${PMA_USER}
-      - PMA_PASSWORD=${PMA_PASSWORD}
+      - PMA_ARBITRARY=1
+      - PMA_HOST=mysql
+      - PMA_PORT=3306
+      - PMA_USER=${MYSQL_USER}
+      - PMA_PASSWORD=${MYSQL_PASSWORD}
 
   redis-server:
-    image: redis:7.0.10
-    restart: always
+    image: redis:8.10
+    restart: unless-stopped
     command: /bin/bash -c 'redis-server --appendonly yes'
     sysctls:
       - net.core.somaxconn=65535
     ports:
-      - ${REDIS_PORT}:6379
+      - ${REDIS_PORT:-6379}:6379
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/redis:/data
+      - redis_data:/data
     mem_limit: 96m
     healthcheck:
       test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   pytest:
     image: python:3.12
-    profiles: ["test"]
+    profiles: [ "test" ]
     env_file: .env
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      REDIS_HOST: redis-server
+      REDIS_PORT: 6379
+      MILVUS_HOST: standalone
+      MILVUS_PORT: 19530
+      TRITON_SERVER_HOST: triton
+      TRITON_SERVER_PORT: 8001
+      DOWNLOAD_CACHE_PATH: /tmp/.data
+      DOWNLOAD_IMAGE_PATH: /tmp/person_images
+      LOG_STORAGE_PATH: /tmp/server_logs
+      PYTHONDONTWRITEBYTECODE: "1"
     depends_on:
       mysql:
         condition: service_healthy
       redis-server:
-        condition: service_started
-      uvicorn_trt_server:
-        condition: service_started
+        condition: service_healthy
+      standalone:
+        condition: service_healthy
+      triton:
+        condition: service_healthy
     volumes:
       - ${PWD}:/workspace
     working_dir: /workspace
@@ -165,8 +240,17 @@ services:
       bash -c "
         pip install -r requirements.txt &&
         pip install -r tests/requirements.txt &&
-        pytest tests -v --tb=short
+        pytest tests -v --tb=short -p no:cacheprovider
       "
+
+volumes:
+  person_images:
+  server_logs:
+  milvus_data:
+  mysql_data:
+  redis_data:
+  etcd_data:
+  minio_data:
 
 networks:
   default:

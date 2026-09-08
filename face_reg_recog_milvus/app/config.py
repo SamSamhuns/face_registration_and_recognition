@@ -5,7 +5,6 @@ configurations and env variables load
 import os
 from logging.config import dictConfig
 
-from app.models import ModelType
 from app.models.logging import LogConfig
 
 # save directories
@@ -49,12 +48,34 @@ MYSQL_CUR_TABLE = os.getenv("MYSQL_CUR_TABLE", default=MYSQL_PERSON_TABLE)
 # milvus conf
 MILVUS_HOST = os.getenv("MILVUS_HOST", default="0.0.0.0")
 MILVUS_PORT = int(os.getenv("MILVUS_PORT", default="19530"))
-FACE_FEAT_MODEL_TYPE = ModelType.ARCFACE
-FACE_VECTOR_DIM = FACE_FEAT_MODEL_TYPE.dim
-FACE_METRIC_TYPE = "L2"
-FACE_INDEX_TYPE = "IVF_FLAT"
-FACE_COLLECTION_NAME = "faces"
-# num of clusters/buckets for each index specific to IVF_FLAT
-FACE_INDEX_NLIST = 4096
-# nprobe specific to IVF denotes num of closest buckets/clusters looked into per file
-FACE_SEARCH_NPROBE = 2056
+
+# face pipeline: exactly one detector and one recogniser are active per deployment.
+# Swap them by changing the env var and restarting; see scripts/download_models.py
+# for the full set of available models.
+FACE_DETECTOR = os.getenv("FACE_DETECTOR", default="scrfd_10g")
+FACE_RECOGNIZER = os.getenv("FACE_RECOGNIZER", default="arcface_r50")
+# minimum detector confidence for a box to count as a face
+FACE_DET_THRESHOLD = float(os.getenv("FACE_DET_THRESHOLD", default="0.5"))
+# reject faces smaller than this fraction of the frame (0.001 == 0.1%)
+FACE_MIN_AREA_FRACTION = float(os.getenv("FACE_MIN_AREA_FRACTION", default="0.001"))
+
+# every supported recogniser emits 512-d embeddings
+FACE_VECTOR_DIM = 512
+# Embeddings are L2-normalised in app.services.faces.embed(), so cosine similarity is
+# the meaningful metric. FLAT is an exact brute-force search: correct at any scale we
+# will realistically hit here, and with none of the training requirements of IVF_FLAT
+# (the old nlist=4096 needed roughly 160k vectors before it could even build a
+# sensible index, against a database holding a handful).
+FACE_METRIC_TYPE = "COSINE"
+FACE_INDEX_TYPE = "FLAT"
+# Cosine similarity in [-1, 1]; HIGHER is a better match. Note this inverts the old
+# L2 comparison, where lower was better.
+FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", default="0.4"))
+
+# Embeddings from two different recognisers are NOT comparable even though they share
+# a dimension -- each model learns its own vector space. So the collection name is
+# derived from the recogniser: switching FACE_RECOGNIZER points at a different
+# collection instead of silently matching new probes against stale vectors.
+# Overridable so the test suite can point at a throwaway collection, the same way
+# MYSQL_CUR_TABLE isolates the SQL side.
+FACE_COLLECTION_NAME = os.getenv("FACE_COLLECTION_NAME", default=f"faces_{FACE_RECOGNIZER}")

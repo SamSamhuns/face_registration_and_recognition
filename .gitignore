@@ -120,8 +120,14 @@ work_dirs/
 .DS_Store
 ._.DS_Store
 
-# model files
-face_reg_recog_milvus/app/triton_server/models/*
+# triton model weights are downloaded by scripts/download_models.py, never committed.
+# The config.pbtxt files next to them ARE tracked -- they are the actual model contract.
+face_reg_recog_milvus/app/triton_server/models/**/*.onnx
+face_reg_recog_milvus/app/triton_server/models/**/*.bin
+face_reg_recog_milvus/app/triton_server/models/**/*.xml
+face_reg_recog_milvus/app/triton_server/models/**/*.pb
+face_reg_recog_milvus/app/triton_server/models/**/variables/
+face_reg_recog_milvus/app/.model_cache/
 
 # docker-compose mounted volumes
 face_reg_recog_milvus/volumes

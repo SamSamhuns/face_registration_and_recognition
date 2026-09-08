@@ -2,4 +2,6 @@
 import all data models
 """
 
-from .model import InputModel, ModelType, PersonModel
+from .model import PersonModel
+
+__all__ = ["PersonModel"]

@@ -3,7 +3,6 @@ Test configurations
 """
 
 import os
-import sys
 from datetime import date
 from unittest.mock import AsyncMock
 
@@ -15,21 +14,26 @@ from httpx import ASGITransport, AsyncClient
 from pymilvus import connections, utility
 from pymysql.cursors import DictCursor
 
-sys.path.append("app")
-
 # custom settings
 TEST_PERSON_FILE_ID = -1
 TEST_PERSON_URL_ID = -2
 TEST_PERSON_MYSQL_ID = -3
 TEST_COLLECTION_NAME = "test"
 MYSQL_TEST_TABLE = "test"
+# Isolate BOTH stores for the test run. Previously only MySQL was redirected, so the
+# route tests wrote face vectors straight into the production Milvus collection and
+# left them there -- later real lookups then matched a test vector whose SQL row had
+# been dropped in teardown.
+ROUTE_TEST_COLLECTION = "test_route_faces"
 os.environ["MYSQL_CUR_TABLE"] = MYSQL_TEST_TABLE  # chg cur table for test duration
+os.environ["FACE_COLLECTION_NAME"] = ROUTE_TEST_COLLECTION
 
 # custom imports
+# ruff: noqa: E402 -- these must be imported *after* MYSQL_CUR_TABLE is set above,
+# because app.config reads it at import time.
 from app import inference
 from app.api.milvus import get_milvus_collec_conn
 from app.config import (
-    FACE_INDEX_NLIST,
     FACE_INDEX_TYPE,
     FACE_METRIC_TYPE,
     FACE_VECTOR_DIM,
@@ -98,13 +102,15 @@ def test_milvus_connec():
         vector_dim=FACE_VECTOR_DIM,
         metric_type=FACE_METRIC_TYPE,
         index_type=FACE_INDEX_TYPE,
-        index_metric_params={"nlist": FACE_INDEX_NLIST},
+        index_metric_params={},
     )
     milvus_collec_conn.load()
     yield milvus_collec_conn
     # drop test collections in teardown
     print("Tearing milvus connection")
     utility.drop_collection(TEST_COLLECTION_NAME)
+    if utility.has_collection(ROUTE_TEST_COLLECTION):
+        utility.drop_collection(ROUTE_TEST_COLLECTION)
     connections.disconnect("default")
 
 

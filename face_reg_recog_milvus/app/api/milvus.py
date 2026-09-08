@@ -16,11 +16,13 @@ def get_milvus_collec_conn(
     vector_dim: int = 128,
     metric_type: str = "L2",
     index_type: str = "IVF_FLAT",
-    index_metric_params: dict = None,
+    index_metric_params: dict | None = None,
 ):
     """
     Gets the milvus collection connection with the given collection name otherwise creates a new one
-    Note: index_metric_params: dict = {"nlist": 4096} for index_type == "IVF_FLAT"
+
+    index_metric_params holds index-type-specific tuning, e.g. {"nlist": 4096} for
+    IVF_FLAT. FLAT is exact brute force and takes no parameters, so {} is correct there.
     """
     # connect to milvus
     connections.connect(alias="default", host=milvus_host, port=milvus_port)
@@ -41,7 +43,7 @@ def get_milvus_collec_conn(
         # Indexing the milvus_collec_conn
         logger.info("Indexing the Collection...🕓")
         # create IVF_FLAT index for milvus_collec_conn.
-        index_params = {"metric_type": metric_type, "index_type": index_type, "params": index_metric_params}
+        index_params = {"metric_type": metric_type, "index_type": index_type, "params": index_metric_params or {}}
         milvus_collec_conn.create_index(field_name="embedding", index_params=index_params)
         logger.info("Collection %s indexed.✅️", collection_name)
     else:

@@ -1,46 +1,30 @@
-# Stage 1: Builder stage
-FROM nvcr.io/nvidia/tritonserver:25.02-py3 AS builder
+# FastAPI service. Triton lives in its own image (Dockerfile.triton).
+FROM python:3.12-slim
 
 LABEL maintainer="fname.lname@domain.com"
 
-# install opencv & python-venv reqs
-RUN apt-get update --no-install-recommends \
-    && apt-get install python3-venv --no-install-recommends -y
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
-# set username & uid inside docker
-ARG UNAME=triton-server
-ENV WORKDIR="/home/$UNAME/src"
+# opencv-python-headless still links against glib even without the GUI backends
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# set work directory
-WORKDIR ${WORKDIR}
+# `app` must sit *inside* WORKDIR so that `uvicorn app.server:app` (which puts the
+# cwd on sys.path) can import it as a package.
+WORKDIR /srv
 
-# setup python env vars & virtual env
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONBUFFERED=1
-ENV VIRTUAL_ENV="/home/$UNAME/venv"
-RUN python3 -m venv $VIRTUAL_ENV
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install python dependencies
-RUN pip install pip==24.0
-COPY requirements.txt  "$WORKDIR/requirements.txt"
-RUN pip install --no-cache-dir --default-timeout=100 -r "$WORKDIR/requirements.txt"
+COPY app ./app
 
-# remove cache
-RUN pip cache purge \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/* \
-    && rm -rf /root/.cache/pip
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /data/cache /data/person_images /data/logs \
+    && chown -R appuser:appuser /srv /data
+USER appuser
 
-# copy app & scripts to src & exclude those in dockerignore
-COPY app "$WORKDIR/app"
-COPY scripts "$WORKDIR/scripts"
-
-# change file ownership to docker user:usergroup
-RUN chown -R "$UNAME:$UNAME" "$WORKDIR"
-
-# make server start script executable
-RUN chmod 777 "$WORKDIR/scripts/start_servers.sh"
-
-USER "$UNAME"
-CMD ["/bin/bash", "/home/triton-server/src/scripts/start_servers.sh"]
+EXPOSE 8080
+CMD ["uvicorn", "app.server:app", "--host", "0.0.0.0", "--port", "8080"]

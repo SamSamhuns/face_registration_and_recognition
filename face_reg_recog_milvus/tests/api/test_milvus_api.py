@@ -31,6 +31,10 @@ def test_get_person_milvus(test_milvus_connec):
 
 
 def test_delete_person_milvus(test_milvus_connec):
-    """Deletes the test person from Milvus. Should call milvus_collec_conn.flush() and milvus_collec_conn.compact(collec_name) after deletion"""
+    """
+    Deletes the test person from Milvus.
+
+    Should call milvus_collec_conn.flush() and .compact(collec_name) after deletion.
+    """
     expr = f"person_id in [{TEST_PERSON_FILE_ID}]"
     assert test_milvus_connec.delete(expr).delete_count == 1

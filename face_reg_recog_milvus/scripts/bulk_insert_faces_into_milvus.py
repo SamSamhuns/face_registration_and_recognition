@@ -31,7 +31,7 @@ import app.config as cfg
 import pymysql
 from app.api.milvus import get_milvus_collec_conn
 from app.api.mysql import insert_person_data_into_sql
-from app.models.model import ModelType, PersonModel
+from app.models.model import PersonModel
 from pymysql.cursors import DictCursor
 
 IMG_EXTS = {".jpg", ".png", ".jpeg"}
@@ -54,7 +54,7 @@ milvus_collec_conn = get_milvus_collec_conn(
     vector_dim=cfg.FACE_VECTOR_DIM,
     metric_type=cfg.FACE_METRIC_TYPE,
     index_type=cfg.FACE_INDEX_TYPE,
-    index_metric_params={"nlist": cfg.FACE_INDEX_NLIST},
+    index_metric_params={},  # FLAT takes no tuning params
 )
 
 
@@ -115,27 +115,24 @@ def face_embedding_extractor_iter(img_dir: str):
     """
     function that yields face_vectors as an iterator from an img_dir
     """
-    import sys
-
-    sys.path.append("app")
-    from app.triton_server.inference_trtserver import run_inference
+    from app.services import faces
 
     imgs = sorted(glob.glob(osp.join(img_dir, "*")))
     imgs = [ip for ip in imgs if osp.splitext(ip)[-1] in IMG_EXTS]
 
     for file_path in imgs:
-        pred_dict = run_inference(
-            file_path,
-            face_feat_model=ModelType.FACENET.name,
-            face_det_thres=0.3,
-            face_bbox_area_thres=0.10,
-            face_count_thres=1,
-            return_mode="json",
-        )
-
-        # insert face_vector into milvus milvus_collec_conn
-        face_vector = pred_dict["face_feats"][0].tolist()
-        yield face_vector
+        try:
+            embedding, _ = faces.embed_primary_face(
+                faces.read_image(file_path),
+                detector=cfg.FACE_DETECTOR,
+                recognizer=cfg.FACE_RECOGNIZER,
+                det_thresh=cfg.FACE_DET_THRESHOLD,
+                min_area_fraction=cfg.FACE_MIN_AREA_FRACTION,
+            )
+        except faces.FaceError as excep:
+            print(f"skipping {file_path}: {excep}")
+            continue
+        yield embedding.tolist()
 
 
 def insert_embeddings_into_milvus_trt_sever(img_dir: str):

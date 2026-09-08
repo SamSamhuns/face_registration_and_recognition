@@ -1,7 +1,9 @@
 """
-Inference functions for registering and recognizing face with trtserver models and save/search with milvus database server
+Register and recognize faces: Triton for detection/embedding, Milvus for vector
+search, MySQL for person records and Redis as a read cache.
 """
 
+import contextlib
 import logging
 import os
 import shutil
@@ -23,10 +25,13 @@ from app.api.mysql import (
 from app.config import (
     DOWNLOAD_IMAGE_PATH,
     FACE_COLLECTION_NAME,
-    FACE_INDEX_NLIST,
+    FACE_DET_THRESHOLD,
+    FACE_DETECTOR,
     FACE_INDEX_TYPE,
+    FACE_MATCH_THRESHOLD,
     FACE_METRIC_TYPE,
-    FACE_SEARCH_NPROBE,
+    FACE_MIN_AREA_FRACTION,
+    FACE_RECOGNIZER,
     FACE_VECTOR_DIM,
     MILVUS_HOST,
     MILVUS_PORT,
@@ -38,10 +43,8 @@ from app.config import (
     MYSQL_USER,
     REDIS_HOST,
     REDIS_PORT,
-    TRITON_SERVER_HOST,
-    TRITON_SERVER_PORT,
 )
-from app.triton_server.inference_trtserver import run_inference
+from app.services import faces, triton
 
 logger = logging.getLogger("inference_api")
 
@@ -93,7 +96,7 @@ def _connect_milvus():
         vector_dim=FACE_VECTOR_DIM,
         metric_type=FACE_METRIC_TYPE,
         index_type=FACE_INDEX_TYPE,
-        index_metric_params={"nlist": FACE_INDEX_NLIST},
+        index_metric_params={},  # FLAT is exact brute force; no tuning params
     )
     conn.load()
     return conn
@@ -123,24 +126,19 @@ def close_connections(disconnect_milvus: bool = True) -> None:
     global redis_conn, mysql_conn, milvus_collec_conn
     with _conn_lock:
         if redis_conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 redis_conn.close()
-            except Exception:
-                pass
         redis_conn = None
         if mysql_conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 mysql_conn.close()
-            except Exception:
-                pass
         mysql_conn = None
         if disconnect_milvus:
-            try:
+            with contextlib.suppress(Exception):
                 from pymilvus import connections
 
                 connections.disconnect("default")
-            except Exception:
-                pass
+        triton.close()
         milvus_collec_conn = None
 
 
@@ -154,7 +152,7 @@ def get_registered_person(person_id: int, table: str = MYSQL_CUR_TABLE) -> dict:
     redis_key = f"{table}_{person_id}"
     cached_person_dict = redis_conn.hgetall(name=redis_key)
     if cached_person_dict:
-        logger.info("record matching id: {person_id} retrieved from redis cache")
+        logger.info("record matching id: %s retrieved from redis cache", person_id)
         return {
             "status": "success",
             "message": f"record matching id: {person_id} retrieved from redis cache",
@@ -206,14 +204,24 @@ def unregister_person(person_id: int, table: str = MYSQL_CUR_TABLE) -> dict:
     return {"status": "success", "message": f"person record with id {person_id} unregistered from database"}
 
 
-def register_person(
-    model_name: str, file_path: str, face_det_threshold: float, person_data: dict, table: str = MYSQL_CUR_TABLE
-) -> dict:
+def _embed_face(file_path: str):
+    """Read an image and return the L2-normalised embedding of its single face."""
+    img = faces.read_image(file_path)
+    embedding, _face = faces.embed_primary_face(
+        img,
+        detector=FACE_DETECTOR,
+        recognizer=FACE_RECOGNIZER,
+        det_thresh=FACE_DET_THRESHOLD,
+        min_area_fraction=FACE_MIN_AREA_FRACTION,
+        max_faces=1,
+    )
+    return embedding
+
+
+def register_person(file_path: str, person_data: dict, table: str = MYSQL_CUR_TABLE) -> dict:
     """
-    Detects faces in image from the file_path and
-    saves the face feature vector & the related person_data dict.
-    person_data dict should be based on the init.sql table schema
-    Operation is atomic, if one insert op fails, all ops fail
+    Detects a face in the image at file_path and stores its embedding alongside
+    person_data. person_data must match the init.sql table schema.
     """
     ensure_connections()
     person_id = person_data["ID"]  # uniq person id from user input
@@ -221,22 +229,10 @@ def register_person(
     if get_registered_person(person_id, table)["status"] == "success":
         return {"status": "failed", "message": f"person with id {person_id} already exists in database"}
 
-    pred_dict = run_inference(
-        file_path,
-        face_feat_model=model_name,
-        face_det_thres=face_det_threshold,
-        face_bbox_area_thres=0.10,
-        face_count_thres=1,
-        host=TRITON_SERVER_HOST,
-        port=TRITON_SERVER_PORT,
-        return_mode="json",
-    )
-
-    if pred_dict["status"] == 0 and not pred_dict["face_detections"]:
-        return {"status": "failed", "message": "No faces were detected in the image"}
-    if pred_dict["status"] < 0:
-        pred_dict["status"] = "failed"
-        return pred_dict
+    try:
+        face_vector = _embed_face(file_path)
+    except faces.FaceError as excep:
+        return {"status": "failed", "message": str(excep)}
 
     try:
         # insert record into mysql
@@ -245,13 +241,9 @@ def register_person(
         if mysql_insert_resp["status"] == "failed":
             raise pymysql.Error
 
-        # insert face_vector into milvus milvus_collec_conn
-        face_vector = pred_dict["face_feats"][0].tolist()
-        data = [[person_id], [face_vector]]
-        milvus_collec_conn.insert(data)
+        milvus_collec_conn.insert([[person_id], [face_vector.tolist()]])
         logger.info("Vector for person with id: %s inserted into milvus db. ✅️", person_id)
-        # After final entity is inserted, it is best to call flush to have no growing segments left in memory
-        # flushes collection data from memory to storage
+        # flush so the vector is searchable rather than sitting in a growing segment
         milvus_collec_conn.flush()
 
         # cache data in redis
@@ -263,7 +255,7 @@ def register_person(
         # commit mysql record insertion
         mysql_conn.commit()
     except (pymysql.Error, MilvusException, redis.RedisError) as excep:
-        msg = f"person with id {person_id} couldn't be registered into database ❌"
+        msg = f"person with id {person_id} couldn\'t be registered into database ❌"
         logger.error("%s: %s", excep, msg)
         return {"status": "failed", "message": msg}
     # save person image to volume if successfully registered
@@ -274,51 +266,36 @@ def register_person(
 
 
 def recognize_person(
-    model_name: str,
-    file_path: str,
-    face_det_threshold: float,
-    face_dist_threshold: float = 0.1,
-    table: str = MYSQL_CUR_TABLE,
+    file_path: str, table: str = MYSQL_CUR_TABLE, match_threshold: float = FACE_MATCH_THRESHOLD
 ) -> dict:
     """
-    Detects faces in image from the file_path and finds the most similar face vector
-    from a set of saved face vectors
+    Detects a face in the image at file_path and returns the closest registered person.
+
+    Similarity is COSINE, so HIGHER is a better match -- the inverse of the old L2
+    comparison. Vectors are L2-normalised at embed time, which is what makes this valid.
     """
     ensure_connections()
-    pred_dict = run_inference(
-        file_path,
-        face_feat_model=model_name,
-        face_det_thres=face_det_threshold,
-        face_bbox_area_thres=0.10,
-        face_count_thres=1,
-        host=TRITON_SERVER_HOST,
-        port=TRITON_SERVER_PORT,
-        return_mode="json",
-    )
+    try:
+        face_vector = _embed_face(file_path)
+    except faces.FaceError as excep:
+        return {"status": "failed", "message": str(excep)}
 
-    if pred_dict["status"] == 0 and not pred_dict["face_detections"]:
-        return {"status": "failed", "message": "No faces were detected in the image"}
-    if pred_dict["status"] < 0:
-        pred_dict["status"] = "failed"
-        return pred_dict
-
-    face_vector = pred_dict["face_feats"]
-    # run a vector search and return the closest face with the L2 metric
-    search_params = {"metric_type": "L2", "params": {"nprobe": FACE_SEARCH_NPROBE}}
     results = milvus_collec_conn.search(
-        data=face_vector, anns_field="embedding", param=search_params, limit=3, output_fields=["person_id"]
+        data=[face_vector.tolist()],
+        anns_field="embedding",
+        param={"metric_type": FACE_METRIC_TYPE, "params": {}},
+        limit=1,
+        output_fields=["person_id"],
     )
-    if not results:
-        return {"status": "failed", "message": "no saved face entries found in database"}
-
-    results = sorted(results, key=lambda k: k.distances)
-
-    face_dist = results[0].distances[0]
-
-    person_id = results[0][0].entity.get("person_id")
-    if face_dist > face_dist_threshold:
+    if not results or not results[0]:
         return {"status": "success", "message": "no similar faces were found in the database"}
 
+    best = results[0][0]
+    if best.distance < match_threshold:
+        logger.info("closest face scored %.3f, below threshold %.3f", best.distance, match_threshold)
+        return {"status": "success", "message": "no similar faces were found in the database"}
+
+    person_id = best.entity.get("person_id")
     get_person_resp = get_registered_person(person_id, table)
     if get_person_resp["status"] == "success":
         return {
