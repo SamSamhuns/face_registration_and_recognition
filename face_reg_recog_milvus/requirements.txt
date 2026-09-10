@@ -1,4 +1,5 @@
 aiofiles==24.1.0
+aiomysql==0.3.2
 fastapi (>=0.129.0,<0.130.0)
 httpx==0.28.1
 opencv-python-headless==4.12.0.88

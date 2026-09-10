@@ -1,184 +1,87 @@
 """
-Bulk insert faces and related person information into the milvus and sql database
+Bulk load a directory of face images into MySQL and Milvus.
 
-CelebA dataset website: http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html
-Aligned faces dataset: https://drive.google.com/drive/folders/0B7EVK8r0v71pWEZsZE9oNnFzTm8?resourcekey=0-5BR16BdXnb8hVj6CNHKzLg
-    images: img/img_align_celeba.zip
-    annotations: Anno
+Each image becomes one person. The SQL row and the face vector always get the same
+id, so a later recognition can join them.
 
-Note only one face per celebrity is inserted into database (i.e. the first face alphabetically inside img_align_celeba)
+    python -m scripts.bulk_insert_faces_into_milvus <image_dir> [--start-id 1]
 
-Faces and related data must be inserted directly into milvus and mysql to reduce latency
-First extract embeddings from faces and insert into milvus
-Second insert related face data into mysql database
+Run it from the directory that contains `app/`, with the same environment the API
+uses. It writes through the same service layer as the API, so the detector, the
+recogniser and the target collection all follow the FACE_* settings.
 
-Run script as a module:
-    # note the milvus & mysql services must be running already
-    python -m scripts.bulk_insert_faces_into_milvus
-
-requirements:
-    # requirements from face_reg_recog_milvus/requirements.txt must also be installed
-        pip install towhee==1.0.0rc1
+Person names and dates here are placeholders. Replace generate_person() if the
+directory carries real identity metadata, for example the CelebA identity file.
 """
 
+import argparse
+import asyncio
 import glob
 import os.path as osp
-import random
-import uuid
 from datetime import date
 
-import app.config as cfg
-import pymysql
-from app.api.milvus import get_milvus_collec_conn
-from app.api.mysql import insert_person_data_into_sql
-from app.models.model import PersonModel
-from pymysql.cursors import DictCursor
+from app.config import FACE_COLLECTION_NAME, MYSQL_CUR_TABLE
+from app.db import persons, vectors
+from app.deps import close_clients, create_clients
+from app.errors import AppError
+from app.schemas import PersonCreate
+from app.services import enroll, faces
 
-IMG_EXTS = {".jpg", ".png", ".jpeg"}
-
-# Connect to MySQL
-mysql_conn = pymysql.connect(
-    host=cfg.MYSQL_HOST,
-    port=cfg.MYSQL_PORT,
-    user=cfg.MYSQL_USER,
-    password=cfg.MYSQL_PASSWORD,
-    db=cfg.MYSQL_DATABASE,
-    cursorclass=DictCursor,
-)
-
-# connect to milvus connec
-milvus_collec_conn = get_milvus_collec_conn(
-    collection_name=cfg.FACE_COLLECTION_NAME,
-    milvus_host=cfg.MILVUS_HOST,
-    milvus_port=cfg.MILVUS_PORT,
-    vector_dim=cfg.FACE_VECTOR_DIM,
-    metric_type=cfg.FACE_METRIC_TYPE,
-    index_type=cfg.FACE_INDEX_TYPE,
-    index_metric_params={},  # FLAT takes no tuning params
-)
+IMG_EXTS = {".jpg", ".jpeg", ".png"}
 
 
-def insert_embeddings_into_milvus_towhee(img_dir: str):
-    """
-    reference nb: https://github.com/towhee-io/examples/blob/main/image/reverse_image_search/1_build_image_search_engine.ipynb
-    """
-    from towhee import ops, pipe, register
+def find_images(img_dir: str) -> list[str]:
+    """Return the sorted image paths in img_dir."""
+    paths = sorted(glob.glob(osp.join(img_dir, "*")))
+    return [p for p in paths if osp.splitext(p)[-1].lower() in IMG_EXTS]
 
-    insert_src_pat = osp.join(img_dir, "*.jpg")
 
-    def load_image(path_pattern):
-        """Yield image paths"""
-        for item in glob.glob(path_pattern):
-            yield from item
-
-    @register
-    def gen_int_id(x=None):
-        """Get a unique int uuid"""
-        return uuid.uuid1().int >> 64
-
-    @register
-    def get_facenet_emb(vec=None):
-        """Get the embedding vector from a facenet model output"""
-        return [list(map(float, vec[0]["embedding"]))]
-
-    # Face embedding pipeline
-    p_embed = (
-        pipe.input("src")
-        .flat_map("src", "img_path", load_image)
-        .map("img_path", "img_id", gen_int_id())
-        .map("img_path", "img", ops.image_decode())
-        .map("img", "vec", ops.face_embedding.deepface(model_name="Facenet"))
-        .map("vec", "emb", get_facenet_emb())
+def generate_person(person_id: int, image_path: str) -> PersonCreate:
+    """Build a placeholder record for one image."""
+    return PersonCreate(
+        id=person_id,
+        name=osp.splitext(osp.basename(image_path))[0],
+        birthdate=date(1990, 1, 1),
+        country="unknown",
     )
 
-    # WARNING, the processing time could be huge
-    # p_out = p_embed.output("emb")(insert_src_pat).get()
-    # print(len(p_out))
 
-    # Insert pipeline
-    p_insert = p_embed.map(
-        ("emb", "img_id"),
-        "mr",
-        ops.ann_insert.milvus_client(
-            host=cfg.MILVUS_HOST, port=cfg.MILVUS_PORT, collection_name=cfg.FACE_COLLECTION_NAME
-        ),
-    ).output("mr")
+async def load(img_dir: str, start_id: int) -> None:
+    images = find_images(img_dir)
+    if not images:
+        print(f"no images found in {img_dir}")
+        return
+    print(f"found {len(images)} images; writing to table {MYSQL_CUR_TABLE} and collection {FACE_COLLECTION_NAME}")
 
-    # Insert data
-    p_insert(insert_src_pat)
+    clients = await create_clients()
+    added = skipped = 0
+    try:
+        for offset, image_path in enumerate(images):
+            person = generate_person(start_id + offset, image_path)
+            try:
+                embedding = await enroll.embed_face(image_path)
+                await persons.insert_person(clients.mysql, MYSQL_CUR_TABLE, person)
+                await vectors.insert_vector(
+                    clients.milvus, FACE_COLLECTION_NAME, person.id, embedding.tolist()
+                )
+                added += 1
+            except (AppError, faces.FaceError) as excep:
+                # One unusable image must not stop the load.
+                skipped += 1
+                print(f"skip {image_path}: {excep}")
+        await clients.milvus.flush(FACE_COLLECTION_NAME)
+    finally:
+        await close_clients(clients)
 
-    # Check collection
-    print("Number of data inserted:", milvus_collec_conn.num_entities)
-
-
-def face_embedding_extractor_iter(img_dir: str):
-    """
-    function that yields face_vectors as an iterator from an img_dir
-    """
-    from app.services import faces
-
-    imgs = sorted(glob.glob(osp.join(img_dir, "*")))
-    imgs = [ip for ip in imgs if osp.splitext(ip)[-1] in IMG_EXTS]
-
-    for file_path in imgs:
-        try:
-            embedding, _ = faces.embed_primary_face(
-                faces.read_image(file_path),
-                detector=cfg.FACE_DETECTOR,
-                recognizer=cfg.FACE_RECOGNIZER,
-                det_thresh=cfg.FACE_DET_THRESHOLD,
-                min_area_fraction=cfg.FACE_MIN_AREA_FRACTION,
-            )
-        except faces.FaceError as excep:
-            print(f"skipping {file_path}: {excep}")
-            continue
-        yield embedding.tolist()
+    print(f"added {added}, skipped {skipped}, of {len(images)} images")
 
 
-def insert_embeddings_into_milvus_trt_sever(img_dir: str):
-    """
-    Inserts embeddings data in bulk into milvus
-    """
-    for face_vector in face_embedding_extractor_iter(img_dir):
-        person_id = ""
-        # insert face_vector into milvus milvus_collec_conn
-        data = [[face_vector], [person_id]]
-        milvus_collec_conn.insert(data)
-
-
-def insert_data_into_mysql(img_dir: str):
-    """
-    Inserts data in bulk into mysql
-    Each data should match the data model in PersonModel app/models/model.py
-    """
-    imgs = sorted(glob.glob(osp.join(img_dir, "*")))
-    imgs = [ip for ip in imgs if osp.splitext(ip)[-1] in IMG_EXTS]
-    imgs_iids = list(range(len(imgs)))
-    data_list = [
-        PersonModel(
-            ID=iid,
-            name=f"person_{iid}",
-            birthdate=date(1971, random.randint(1, 12), random.randint(1, 28)),
-            country=f"country_{random.randint(1, 1000)}",
-        ).dict()
-        for iid in imgs_iids
-    ]
-
-    ins = 0
-    for data in data_list:
-        rtn = insert_person_data_into_sql(mysql_conn, cfg.MYSQL_CUR_TABLE, data)
-        if rtn["status"] == "success":
-            ins += 1
-    print(f"{ins} records successfully inserted into mysql table out of {len(data_list)} original data")
-
-
-def main():
-    """
-    Main function, the img dir containing face images should be passed into the insert_data functions
-    """
-    # insert_embeddings_into_milvus_towhee(
-    #     "../volumes/img_align_celeba_unique")
-    insert_data_into_mysql("../volumes/img_align_celeba_unique")
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("image_dir", help="directory of face images, one face per image")
+    parser.add_argument("--start-id", type=int, default=1, help="first person id to assign")
+    args = parser.parse_args()
+    asyncio.run(load(args.image_dir, args.start_id))
 
 
 if __name__ == "__main__":

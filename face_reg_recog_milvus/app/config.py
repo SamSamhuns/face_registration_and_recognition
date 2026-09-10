@@ -5,7 +5,7 @@ configurations and env variables load
 import os
 from logging.config import dictConfig
 
-from app.models.logging import LogConfig
+from app.logging_config import LogConfig
 
 # save directories
 DOWNLOAD_CACHE_PATH = os.getenv("DOWNLOAD_CACHE_PATH", default="app/.data")
@@ -26,6 +26,19 @@ dictConfig(log_cfg.model_dump())
 
 # http api server
 FASTAPI_SERVER_PORT = int(os.getenv("FASTAPI_SERVER_PORT", default="8080"))
+API_V1_PREFIX = "/api/v1"
+
+# CORS. Note allow_credentials=True is INVALID alongside a "*" origin -- browsers
+# reject that combination -- so credentials are only enabled for an explicit list.
+CORS_ALLOW_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", default="*").split(",") if o.strip()]
+CORS_ALLOW_CREDENTIALS = CORS_ALLOW_ORIGINS != ["*"]
+
+# upload limits, enforced at the trust boundary before anything touches disk
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", default=str(10 * 1024 * 1024)))
+ALLOWED_IMAGE_TYPES = frozenset({"image/jpeg", "image/jpg", "image/png", "image/webp", "image/bmp"})
+# cap on bytes pulled from a remote image_url, so a hostile URL cannot fill the disk
+MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", default=str(10 * 1024 * 1024)))
+DOWNLOAD_TIMEOUT_SECONDS = float(os.getenv("DOWNLOAD_TIMEOUT_SECONDS", default="10"))
 
 # triton server conf
 TRITON_SERVER_HOST = os.getenv("TRITON_SERVER_HOST", default="0.0.0.0")
@@ -44,6 +57,13 @@ MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", default="default")
 MYSQL_PERSON_TABLE = os.getenv("MYSQL_PERSON_TABLE", default="person")
 # table where ops will be run on
 MYSQL_CUR_TABLE = os.getenv("MYSQL_CUR_TABLE", default=MYSQL_PERSON_TABLE)
+# aiomysql pool bounds. The old code shared ONE pymysql connection across every
+# request, which is neither thread- nor task-safe.
+MYSQL_POOL_MIN = int(os.getenv("MYSQL_POOL_MIN", default="1"))
+MYSQL_POOL_MAX = int(os.getenv("MYSQL_POOL_MAX", default="10"))
+
+# how long a cached person record stays in redis
+REDIS_CACHE_TTL_SECONDS = int(os.getenv("REDIS_CACHE_TTL_SECONDS", default="3600"))
 
 # milvus conf
 MILVUS_HOST = os.getenv("MILVUS_HOST", default="0.0.0.0")
