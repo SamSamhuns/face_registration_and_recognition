@@ -1,0 +1,46 @@
+:root {
+  --bg: #12151a; --panel: #1b1f27; --line: #2c323d;
+  --text: #e6e9ef; --dim: #98a1b0; --accent: #4c8dff;
+  --ok: #3fb950; --bad: #f85149; --warn: #d29922;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 system-ui, sans-serif;
+}
+header {
+  display: flex; gap: 1rem; align-items: center;
+  padding: .8rem 1.2rem; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+header strong { margin-right: auto; }
+header a { color: var(--dim); text-decoration: none; padding: .3rem .7rem; border-radius: 6px; }
+header a:hover { background: var(--line); color: var(--text); }
+header a.active { background: var(--accent); color: #fff; }
+main { max-width: 900px; margin: 1.5rem auto; padding: 0 1.2rem; }
+h1 { font-size: 1.3rem; margin: 0 0 1rem; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1.2rem; margin-bottom: 1.2rem; }
+.row { display: flex; gap: 1.2rem; flex-wrap: wrap; }
+.row > * { flex: 1 1 260px; }
+label { display: block; font-size: .82rem; color: var(--dim); margin-bottom: 1rem; }
+input {
+  width: 100%; margin-top: .3rem; padding: .5rem .6rem; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit;
+}
+button {
+  padding: .55rem 1.1rem; border: 0; border-radius: 6px; background: var(--accent);
+  color: #fff; font: inherit; cursor: pointer;
+}
+button.secondary { background: var(--line); color: var(--text); }
+button.danger { background: var(--bad); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+video, canvas, img.shot { width: 100%; max-width: 380px; border-radius: 8px; background: #000; display: block; }
+.status { margin-top: 1rem; padding: .7rem .9rem; border-radius: 6px; font-size: .9rem; display: none; }
+.status.show { display: block; }
+.status.ok   { background: #12301c; color: var(--ok);   border: 1px solid var(--ok); }
+.status.bad  { background: #33161a; color: var(--bad);  border: 1px solid var(--bad); }
+.status.info { background: #1d2635; color: var(--dim);  border: 1px solid var(--line); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: .55rem .5rem; border-bottom: 1px solid var(--line); font-size: .9rem; }
+th { color: var(--dim); font-weight: 500; }
+.match { font-size: 1.6rem; font-weight: 600; }
+.muted { color: var(--dim); font-size: .85rem; }

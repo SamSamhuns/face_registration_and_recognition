@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manage - Face Registration</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <strong>Face Registration</strong>
+  <a href="enroll.html">Enroll</a>
+  <a href="recognize.html">Recognize</a>
+  <a href="manage.html">Manage</a>
+</header>
+<main>
+  <h1>Registered persons</h1>
+  <div class="panel">
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Name</th><th>Birthdate</th><th>Country</th><th>City</th><th></th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p style="margin-top:1rem">
+      <button id="prev" class="secondary" disabled>Previous</button>
+      <button id="next" class="secondary" disabled>Next</button>
+      <span id="count" class="muted"></span>
+    </p>
+    <div id="status" class="status"></div>
+  </div>
+</main>
+<script src="app.js"></script>
+<script src="manage.js"></script>
+</body>
+</html>

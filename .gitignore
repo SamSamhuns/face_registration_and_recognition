@@ -131,3 +131,5 @@ face_reg_recog_milvus/app/.model_cache/
 
 # docker-compose mounted volumes
 face_reg_recog_milvus/volumes
+# self-signed development certificates, made by scripts/generate_dev_cert.sh
+face_reg_recog_milvus/frontend/certs/

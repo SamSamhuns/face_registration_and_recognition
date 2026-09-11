@@ -16,7 +16,7 @@ from app.schemas import PersonCreate, PersonRead
 
 logger = logging.getLogger("db.persons")
 
-# Columns as declared by app/static/sql/init.sql.
+# Columns as declared by app/sql/init.sql.
 COLUMNS = ("ID", "name", "birthdate", "country", "city", "title", "org")
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")

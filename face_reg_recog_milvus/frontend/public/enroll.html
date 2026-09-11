@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Enroll - Face Registration</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <strong>Face Registration</strong>
+  <a href="enroll.html">Enroll</a>
+  <a href="recognize.html">Recognize</a>
+  <a href="manage.html">Manage</a>
+</header>
+<main>
+  <h1>Register a person</h1>
+
+  <div class="row">
+    <div class="panel">
+      <p class="muted">One face only. More than one face is refused.</p>
+      <video id="video" playsinline muted hidden></video>
+      <img id="shot" class="shot" hidden alt="captured face">
+      <p style="margin:.8rem 0 0">
+        <button id="start" class="secondary">Start camera</button>
+        <button id="capture" disabled>Capture</button>
+      </p>
+      <label style="margin-top:1rem">Or choose a file
+        <input id="file" type="file" accept="image/*">
+      </label>
+    </div>
+
+    <form id="form" class="panel">
+      <div class="row">
+        <label>ID <input name="id" type="number" required></label>
+        <label>Name <input name="name" required maxlength="255"></label>
+      </div>
+      <div class="row">
+        <label>Birthdate <input name="birthdate" type="date" required></label>
+        <label>Country <input name="country" required maxlength="255"></label>
+      </div>
+      <div class="row">
+        <label>City <input name="city" maxlength="255"></label>
+        <label>Title <input name="title" maxlength="255"></label>
+      </div>
+      <label>Organisation <input name="org" maxlength="255"></label>
+      <button id="submit" type="submit" disabled>Register</button>
+      <div id="status" class="status"></div>
+    </form>
+  </div>
+</main>
+<script src="app.js"></script>
+<script src="enroll.js"></script>
+</body>
+</html>

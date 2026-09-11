@@ -9,6 +9,8 @@
 services:
   api:
     ports: !reset []
+  frontend:
+    ports: !reset []
   triton:
     ports: !reset []
   standalone:

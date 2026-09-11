@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recognize - Face Registration</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <strong>Face Registration</strong>
+  <a href="enroll.html">Enroll</a>
+  <a href="recognize.html">Recognize</a>
+  <a href="manage.html">Manage</a>
+</header>
+<main>
+  <h1>Identify a face</h1>
+  <div class="row">
+    <div class="panel">
+      <video id="video" playsinline muted hidden></video>
+      <img id="shot" class="shot" hidden alt="captured face">
+      <p style="margin:.8rem 0 0">
+        <button id="start" class="secondary">Start camera</button>
+        <button id="capture" disabled>Capture and identify</button>
+      </p>
+      <label style="margin-top:1rem">Or choose a file
+        <input id="file" type="file" accept="image/*">
+      </label>
+    </div>
+    <div class="panel">
+      <div id="result">
+        <p class="muted">No result yet.</p>
+      </div>
+      <div id="status" class="status"></div>
+    </div>
+  </div>
+</main>
+<script src="app.js"></script>
+<script src="recognize.js"></script>
+</body>
+</html>

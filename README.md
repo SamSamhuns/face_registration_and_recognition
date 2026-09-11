@@ -32,9 +32,15 @@ cp .env.example .env
 # 2. Download the model weights, about 880 MB, verified by checksum.
 python3 scripts/download_models.py
 
-# 3. Start every service.
+# 3. Make a development certificate. Add your LAN address to use the camera
+#    from another device.
+./scripts/generate_dev_cert.sh
+
+# 4. Start every service.
 docker compose up -d
 ```
+
+The web pages are at <https://localhost:8443>. The camera needs HTTPS or localhost.
 
 Then register a face and find it again:
 
@@ -57,6 +63,7 @@ can reach its dependencies with `curl http://localhost:8080/health/ready`.
 | [docs/architecture.md](docs/architecture.md) | Services, code layers, and the path of one request |
 | [docs/api.md](docs/api.md) | HTTP endpoints, status codes, and examples |
 | [docs/models.md](docs/models.md) | Face models, downloads, and how to change them |
+| [docs/frontend.md](docs/frontend.md) | The web pages, HTTPS, and the nginx proxy |
 | [docs/security.md](docs/security.md) | Attacks on face recognition, and countermeasures |
 
 ## Tests

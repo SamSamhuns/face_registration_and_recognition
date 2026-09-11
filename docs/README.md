@@ -5,6 +5,7 @@
 | [architecture.md](architecture.md) | Services, code layers, and the path of one request |
 | [api.md](api.md) | HTTP endpoints, status codes, and examples |
 | [models.md](models.md) | Face models, how to download them, and how to change them |
+| [frontend.md](frontend.md) | The web pages, HTTPS, and the nginx proxy |
 | [security.md](security.md) | Attacks on face recognition, and countermeasures |
 
 ## Quick start
@@ -40,6 +41,7 @@ The host ports come from `.env`. These are the defaults.
 
 | Port | Service | Purpose |
 | --- | --- | --- |
+| 8443 | frontend | The web pages, over HTTPS |
 | 8080 | api | The HTTP API |
 | 8001 | triton | Inference, gRPC |
 | 19530 | standalone | Milvus, vector search |
