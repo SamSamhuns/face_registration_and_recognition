@@ -1,14 +1,9 @@
 """
 Client lifecycle and FastAPI dependency providers.
 
-The old design kept redis_conn / mysql_conn / milvus_collec_conn as module globals
-guarded by a threading.Lock, with an ensure_connections() call at the top of every
-function in case something had not been opened yet. That is a service locator:
-untestable without monkeypatching module state, and easy to forget.
-
-Here the clients are created once in the lifespan, stashed on app.state, and handed
-to routes through Depends. A test can build the app with a different Clients object
-and nothing has to be patched.
+The clients are created once in the lifespan, kept on app.state, and given to routes
+through Depends. A test can build the app with a different Clients object, and no
+module state has to be patched.
 """
 
 import asyncio

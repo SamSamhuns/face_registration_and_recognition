@@ -1,17 +1,44 @@
 name: Python Face Registration & Recognition Test CI
 
+# Runs on a self-hosted runner because of disk. The Triton image alone is about
+# 31 GB unpacked, and a GitHub-hosted runner offers roughly 14 GB free, so this
+# job cannot run there without a much smaller inference image.
+
 on:
   push:
     branches:
       - master
+  pull_request:
 
 jobs:
+  lint:
+    runs-on: self-hosted-linux
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install ruff
+        # Pinned, so a new ruff release cannot fail an unchanged branch.
+        run: pip install ruff==0.12.8
+
+      - name: Check style and common errors
+        # --no-fix on purpose. The repository sets fix = true for local work, but a
+        # fixer must not run here: it deletes an import that a bug has made unused,
+        # and so hides the bug it should report.
+        run: ruff check . --no-fix
+
   test:
     runs-on: self-hosted-linux
+    env:
+      # One definition of the compose invocation, used by every step below.
+      COMPOSE_ARGS: -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Report free disk
+        run: df -h / | tail -1
 
       - name: Cache Docker Compose binary
         uses: actions/cache@v4
@@ -36,20 +63,41 @@ jobs:
             echo "Docker Compose already installed"
           fi
 
-      - name: Cache models
-        id: cache-models
+      # The weights are about 880 MB. A cache key must change when the set of models
+      # changes, and must not change otherwise, because every distinct key writes
+      # another 880 MB into the 10 GB repository cache quota.
+      #
+      # Hashing the whole download script would also react to an edited comment.
+      # Hashing only the pinned checksums reacts to exactly the right thing: a
+      # different file always has a different checksum, whatever its URL.
+      - name: Fingerprint the model set
+        id: models
+        working-directory: face_reg_recog_milvus
+        run: |
+          fingerprint=$(grep -oE 'sha256="[a-f0-9]{64}"' scripts/download_models.py \
+            | sort | sha256sum | cut -c1-16)
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          echo "model set fingerprint: $fingerprint"
+
+      - name: Cache model weights
         uses: actions/cache@v4
         with:
           path: face_reg_recog_milvus/app/triton_server/models
-          key: model-cache-1gZ3JI-A7L-l_WTE5bDYv9b_GA1IoRvYI
+          key: model-cache-${{ steps.models.outputs.fingerprint }}
+          # On a miss, start from the newest earlier cache. The next step then
+          # fetches only the model that actually changed, not all of them.
+          restore-keys: model-cache-
 
-      - name: Download models
-        if: steps.cache-models.outputs.cache-hit != 'true'
+      - name: Download model weights
+        working-directory: face_reg_recog_milvus
+        # Runs on every build, cache hit or miss. The script checks each file against
+        # its SHA256 and fetches only what is missing or wrong, so a good cache makes
+        # this a no-op and a stale cache repairs itself.
         run: |
-          pip install gdown
-          gdown 1gZ3JI-A7L-l_WTE5bDYv9b_GA1IoRvYI -O models.zip
-          unzip -o models.zip -d face_reg_recog_milvus/app/triton_server
-          rm models.zip
+          python3 scripts/download_models.py
+          # The script keeps the downloaded archives to make a later run cheap. CI
+          # gets that from the cache instead, and the archives are another 970 MB.
+          rm -rf app/.model_cache
 
       - name: Create .env file
         working-directory: face_reg_recog_milvus
@@ -58,58 +106,36 @@ jobs:
       - name: Build Docker Compose services
         working-directory: face_reg_recog_milvus
         run: |
-          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci build
+          docker compose $COMPOSE_ARGS build
           docker image prune -f
 
       - name: Start Docker Compose services
         working-directory: face_reg_recog_milvus
-        shell: bash
         run: |
-          mkdir -p volumes/person_images
-          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci down -v
-          docker compose -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci up -d api triton etcd minio standalone attu mysql mysql-admin redis-server
-          # Wait for services to be healthy
-          services=("etcd" "minio" "mysql" "redis-server" "standalone" "triton" "api")
-          for service in "${services[@]}"; do
-            cid=$(docker compose -p face_reg_ci ps -q "$service")
-            if [ -z "$cid" ]; then
-              echo "Missing container for $service"
-              exit 1
-            fi
-          done
-          attempts=60
-          for i in $(seq 1 "$attempts"); do
-            all_ok=true
-            for service in "${services[@]}"; do
-              cid=$(docker compose -p face_reg_ci ps -q "$service")
-              status=$(docker inspect --format='{{.State.Status}}' "$cid")
-              health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid")
-              if [ "$health" = "healthy" ]; then
-                continue
-              fi
-              if [ "$health" = "none" ] && [ "$status" = "running" ]; then
-                continue
-              fi
-              all_ok=false
-              echo "Waiting on $service (status=$status, health=$health)"
-            done
-            if [ "$all_ok" = "true" ]; then
-              echo "All services ready"
-              break
-            fi
-            sleep 2
-          done
-          if [ "$all_ok" != "true" ]; then
-            echo "Services did not become ready in time"
-            docker compose -p face_reg_ci ps
-            exit 1
-          fi
+          docker compose $COMPOSE_ARGS down -v --remove-orphans
+          # --wait blocks until every started service reports healthy, and fails if
+          # one does not. attu and mysql-admin are web consoles, so tests skip them.
+          docker compose $COMPOSE_ARGS up -d --wait --wait-timeout 300 \
+            api triton etcd minio standalone mysql redis-server
 
       - name: Run PyTest
         working-directory: face_reg_recog_milvus
-        run: docker compose -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci run --rm pytest
+        run: docker compose $COMPOSE_ARGS run --rm pytest
 
-      - name: Stop Docker Compose services
+      - name: Show service state on failure
+        if: failure()
+        working-directory: face_reg_recog_milvus
+        run: |
+          docker compose $COMPOSE_ARGS ps
+          docker compose $COMPOSE_ARGS logs --tail 80 api triton
+          df -h /
+
+      - name: Stop services and reclaim disk
         if: always()
         working-directory: face_reg_recog_milvus
-        run: docker compose -f docker-compose.yaml -f docker-compose.ci.yaml -p face_reg_ci down -v
+        run: |
+          docker compose $COMPOSE_ARGS down -v --remove-orphans
+          # Build cache grows without limit on a self-hosted runner. Keep one week,
+          # which is enough to reuse layers between runs.
+          docker builder prune -f --filter until=168h
+          df -h / | tail -1

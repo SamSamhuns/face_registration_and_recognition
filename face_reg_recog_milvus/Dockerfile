@@ -19,11 +19,14 @@ WORKDIR /srv
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-
+# The user is created before the copy, and the copy sets ownership itself. A later
+# `chown -R` would rewrite every file, and so add a second full-size layer.
 RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /data/cache /data/person_images /data/logs \
     && chown -R appuser:appuser /srv /data
+
+COPY --chown=appuser:appuser app ./app
+
 USER appuser
 
 EXPOSE 8080

@@ -1,12 +1,13 @@
 """
 Triton gRPC transport.
 
-The old code built a fresh InferenceServerClient *and* re-fetched model metadata and
-config on every single request -- three extra round trips per inference. The client is
-thread-safe and cheap to hold, so it is created once and cached here.
+The client is thread safe and cheap to hold, so it is created once and cached here,
+together with the model metadata. Building it per request would add three round trips
+to every inference.
 
-Still the synchronous client: the calling code is sync too. Phase 2 swaps this for
-`tritonclient.grpc.aio` when the whole request path becomes async.
+The client is synchronous on purpose. Its caller is the face pipeline, which runs in
+a worker thread (see app.services.enroll.embed_face), and a worker thread has no
+event loop for an async client to use.
 """
 
 import contextlib

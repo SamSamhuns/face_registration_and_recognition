@@ -1,17 +1,23 @@
 # CI override. The base compose file already uses named volumes, so this only has to
-# stop services from publishing host ports (shared runners collide on them).
+# stop services from publishing host ports. A shared runner collides on them.
+#
+# `!reset []` and not `ports: []`. Compose merges a sequence by appending to it, so
+# an empty list adds nothing and every port stays published. The `!reset` tag is the
+# documented way to clear a field in an override, and it needs Compose v2.24 or
+# newer. Check with:
+#   docker compose -f docker-compose.yaml -f docker-compose.ci.yaml config
 services:
   api:
-    ports: []
+    ports: !reset []
   triton:
-    ports: []
+    ports: !reset []
   standalone:
-    ports: []
+    ports: !reset []
   attu:
-    ports: []
+    ports: !reset []
   mysql:
-    ports: []
+    ports: !reset []
   mysql-admin:
-    ports: []
+    ports: !reset []
   redis-server:
-    ports: []
+    ports: !reset []

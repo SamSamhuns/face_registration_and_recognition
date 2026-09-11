@@ -1,10 +1,8 @@
 """
 Person resource: /api/v1/persons
 
-Replaces /register_person_file and /register_person_url. The old routes put verbs
-in the URL, duplicated themselves once per image source, carried person data as
-query parameters, and answered 200 for failures. This is one resource with proper
-verbs and status codes.
+One resource, with HTTP verbs and status codes. The image source is a dependency, so
+a file upload and a URL share the same endpoint.
 """
 
 import logging
@@ -32,8 +30,7 @@ async def image_source(
     """
     Accept the face image from either a file upload or a URL, exactly one of the two.
 
-    Collapsing both sources into one dependency is what lets /persons stay a single
-    endpoint instead of the _file/_url pair the old API had.
+    One dependency for both sources keeps /persons a single endpoint.
     """
     if (image is None) == (image_url is None):
         raise ValidationError("provide exactly one of 'image' (file upload) or 'image_url'")
@@ -93,7 +90,7 @@ async def list_persons(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> PersonList:
-    """Page through registered persons. The old GET /person returned the whole table."""
+    """Page through registered persons. `limit` bounds the reply size."""
     items, total = await persons_db.list_persons(clients.mysql, MYSQL_CUR_TABLE, limit, offset)
     return PersonList(items=items, total=total, limit=limit, offset=offset)
 

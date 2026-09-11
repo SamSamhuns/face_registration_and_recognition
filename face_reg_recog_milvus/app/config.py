@@ -57,8 +57,8 @@ MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", default="default")
 MYSQL_PERSON_TABLE = os.getenv("MYSQL_PERSON_TABLE", default="person")
 # table where ops will be run on
 MYSQL_CUR_TABLE = os.getenv("MYSQL_CUR_TABLE", default=MYSQL_PERSON_TABLE)
-# aiomysql pool bounds. The old code shared ONE pymysql connection across every
-# request, which is neither thread- nor task-safe.
+# aiomysql pool bounds. A single shared connection is neither thread safe nor task
+# safe, so each task takes one from the pool.
 MYSQL_POOL_MIN = int(os.getenv("MYSQL_POOL_MIN", default="1"))
 MYSQL_POOL_MAX = int(os.getenv("MYSQL_POOL_MAX", default="10"))
 
@@ -81,15 +81,12 @@ FACE_MIN_AREA_FRACTION = float(os.getenv("FACE_MIN_AREA_FRACTION", default="0.00
 
 # every supported recogniser emits 512-d embeddings
 FACE_VECTOR_DIM = 512
-# Embeddings are L2-normalised in app.services.faces.embed(), so cosine similarity is
-# the meaningful metric. FLAT is an exact brute-force search: correct at any scale we
-# will realistically hit here, and with none of the training requirements of IVF_FLAT
-# (the old nlist=4096 needed roughly 160k vectors before it could even build a
-# sensible index, against a database holding a handful).
+# app.services.faces.embed() L2-normalises every vector, so cosine is the metric that
+# has meaning here. FLAT is an exact search. It needs no training, unlike IVF_FLAT,
+# which needs roughly 160000 vectors before its clusters mean anything.
 FACE_METRIC_TYPE = "COSINE"
 FACE_INDEX_TYPE = "FLAT"
-# Cosine similarity in [-1, 1]; HIGHER is a better match. Note this inverts the old
-# L2 comparison, where lower was better.
+# Cosine similarity, from -1 to 1. A higher score is a better match.
 FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", default="0.4"))
 
 # Embeddings from two different recognisers are NOT comparable even though they share

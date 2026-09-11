@@ -1,12 +1,10 @@
 """
 Async Redis read-cache for person records.
 
-Records are stored as JSON rather than a redis hash. A hash stringifies every
-value, so a cache hit used to return {"ID": "7001", "birthdate": "1990-01-01"}
-while a database hit returned an int and a datetime.date. Callers then had to
-paper over the difference -- the old tests literally did {k: str(v) for ...} to
-make the two agree. JSON round-trips through the Pydantic model instead, so a hit
-and a miss are indistinguishable to the caller.
+Records are stored as JSON, not as a redis hash. A hash makes every value a string,
+so a cached read would give {"id": "7001", "birthdate": "1990-01-01"} while a
+database read gives an int and a date. JSON goes through the Pydantic model in both
+directions, so a hit and a miss look the same to the caller.
 """
 
 import logging

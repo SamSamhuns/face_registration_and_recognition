@@ -95,3 +95,8 @@ venv*
 
 # must ignore volumes dir created by docker-compose
 volumes
+# Model weights and their download cache. Triton bind-mounts the weights from the
+# host, so the API image never needs them. Without these two lines they are copied
+# into the image, which adds about 1.9 GB.
+app/triton_server/models/
+app/.model_cache/

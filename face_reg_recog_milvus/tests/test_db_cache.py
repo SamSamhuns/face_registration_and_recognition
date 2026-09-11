@@ -9,9 +9,9 @@ async def test_cache_round_trip_keeps_types(clients, clean_stores):
     """
     A cache hit and a database hit must be indistinguishable.
 
-    The old implementation used a redis hash, which turns every value into a
-    string. A cached read then returned id "-201" while a database read returned
-    -201. JSON round trips through the model, so the types stay correct.
+    A redis hash would make every value a string, so a cached read would give the id
+    as "-201" while a database read gives -201. JSON goes through the model, so the
+    types stay correct.
     """
     original = person(-201, "cached")
     await persons.insert_person(clients.mysql, TEST_TABLE, original)

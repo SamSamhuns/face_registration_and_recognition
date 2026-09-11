@@ -26,10 +26,10 @@ class PersonBase(BaseModel):
 
 class PersonCreate(PersonBase):
     """
-    Body of POST /persons, submitted as multipart form fields alongside the image.
+    Body of POST /persons, sent as multipart form fields beside the image.
 
-    These used to travel as *query parameters*, which put names and birthdates into
-    every access log and proxy trace along the way.
+    Form fields, not query parameters, so names and birthdates stay out of access
+    logs and proxy traces.
     """
 
     id: int = Field(description="caller-assigned unique person id")

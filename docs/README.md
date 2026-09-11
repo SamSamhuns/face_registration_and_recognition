@@ -5,6 +5,7 @@
 | [architecture.md](architecture.md) | Services, code layers, and the path of one request |
 | [api.md](api.md) | HTTP endpoints, status codes, and examples |
 | [models.md](models.md) | Face models, how to download them, and how to change them |
+| [security.md](security.md) | Attacks on face recognition, and countermeasures |
 
 ## Quick start
 
@@ -49,6 +50,32 @@ The host ports come from `.env`. These are the defaults.
 
 Triton also serves HTTP on port 8000 inside the network. That port is not published.
 The container healthcheck uses it.
+
+## Disk
+
+The stack needs roughly 40 GB of images. Triton is almost all of it.
+
+| Image | Size |
+| --- | --- |
+| `nvcr.io/nvidia/tritonserver` | 31 GB |
+| `python:3.12` (test runner) | 1.6 GB |
+| `milvusdb/milvus` | 1.3 GB |
+| everything else together | 3 GB |
+| model weights plus download cache | 1.8 GB |
+
+Two consequences:
+
+- A GitHub-hosted runner cannot run the test job. It offers about 14 GB free, and
+  the Triton image alone is larger than that. Use a self-hosted runner.
+- On a self-hosted runner the Docker build cache grows without limit. The workflow
+  prunes anything older than a week after each run.
+
+The API image excludes the model weights through `.dockerignore`. Triton reads them
+from a bind mount, so the API never needs a copy. Without that exclusion the image
+grows by about 1.9 GB, and a `chown -R` after the copy would double it again.
+
+`app/.model_cache` holds the downloaded archives so a repeat download is cheap. It is
+safe to delete at any time.
 
 ## Tests
 

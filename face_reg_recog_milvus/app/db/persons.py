@@ -1,10 +1,9 @@
 """
 Async MySQL access for person records, over an aiomysql pool.
 
-The previous version shared a single pymysql connection across every request.
-PyMySQL connections are not safe for concurrent use, so two overlapping requests
-could interleave on the same socket. A pool hands each task its own connection and
-returns it afterwards.
+A pool gives each task its own connection and takes it back afterwards. One shared
+connection is not safe for concurrent use, because two overlapping requests would
+interleave on the same socket.
 """
 
 import logging

@@ -80,9 +80,8 @@ def _letterbox(img: np.ndarray, size: int) -> tuple[np.ndarray, float]:
     """
     Resize preserving aspect ratio, padding right/bottom only.
 
-    Padding on one corner (rather than centred) means undoing it is a single divide by
-    `scale` with no offset bookkeeping -- which is where the old scale_coords() helper
-    got fiddly.
+    Padding one corner, and not the centre, means one divide by `scale` undoes it.
+    Centred padding would need an offset for each axis as well.
     """
     img_h, img_w = img.shape[:2]
     scale = min(size / img_w, size / img_h)

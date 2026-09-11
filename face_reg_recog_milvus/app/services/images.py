@@ -37,50 +37,18 @@ def _scratch_path() -> Path:
 
 async def save_upload(upload: UploadFile) -> Path:
     """
-    Stream an uploaded file to a scratch path, enforcing the type and size limits.
+    Stream an uploaded file to a scratch path, within the type and size limits.
 
-    TODO(human): implement this.
+    The upload is read in parts, not in one call. Reading it whole would hold the
+    entire file in memory before any limit could apply, so a few large uploads would
+    exhaust it. Reading in parts allows an early stop.
 
-    Available to you:
-      - `upload.content_type` is the client-declared MIME type.
-      - `ALLOWED_IMAGE_TYPES` is a frozenset of the types we accept.
-      - `MAX_UPLOAD_BYTES` is the cap.
-      - `CHUNK` (64 KiB) is a sensible read size.
-      - `_scratch_path()` gives you a unique destination Path.
-      - `UnsupportedMediaTypeError` and `PayloadTooLargeError` are the errors to raise.
-      - aiofiles is imported; `async with aiofiles.open(path, "wb") as f: await f.write(chunk)`.
+    A rejected upload deletes its partial file. Without that, a caller can fill the
+    disk with rejected uploads, and the size limit becomes the attack it should stop.
 
-    Shape to aim for:
-
-        if <declared type not acceptable>:
-            raise UnsupportedMediaTypeError(...)
-        path, total = _scratch_path(), 0
-        async with aiofiles.open(path, "wb") as fptr:
-            while chunk := await upload.read(CHUNK):
-                total += len(chunk)
-                if total > MAX_UPLOAD_BYTES:
-                    <clean up the partial file, then raise PayloadTooLargeError>
-                await fptr.write(chunk)
-        return path
-
-    The decisions worth making consciously:
-
-    1. STREAM, DO NOT BUFFER. The old code did `await img_file.read()` with no
-       argument, pulling the entire upload into memory before writing it out. A
-       handful of concurrent 500MB uploads is then an OOM, and the size limit
-       arrives too late to prevent it. Reading in chunks lets you abort partway.
-
-    2. DELETE THE PARTIAL FILE before raising. If you bail on the size check
-       without unlinking, a caller can fill the disk with rejected uploads --
-       turning the size limit into the exact denial of service it was meant to
-       stop. `path.unlink(missing_ok=True)` is enough.
-
-    3. CONTENT-TYPE IS A HINT, NOT A GUARANTEE. It is whatever the client typed in
-       the multipart header, so this check is a cheap early reject, not real
-       validation. The actual guarantee comes later, when faces.read_image() either
-       decodes the bytes or raises. Rejecting on it early is still worth doing --
-       it avoids spending a Triton round trip on a PDF -- just do not mistake it
-       for security.
+    The content type is a hint, not proof. The client supplies it. It is a cheap
+    early reject that saves a Triton round trip. The real check happens later, when
+    faces.read_image() either decodes the bytes or fails.
     """
     if upload.content_type not in ALLOWED_IMAGE_TYPES:
         raise UnsupportedMediaTypeError(f"declared content-type {upload.content_type!r} is not an accepted image type")

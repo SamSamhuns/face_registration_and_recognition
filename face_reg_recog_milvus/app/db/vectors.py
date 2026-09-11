@@ -46,8 +46,8 @@ async def search(
     """
     Nearest neighbours for `vector`, as (person_id, similarity) ordered best-first.
 
-    With COSINE the returned distance IS the cosine similarity, so higher is closer
-    -- the opposite of the L2 ordering this code used to assume.
+    With COSINE the returned distance is the cosine similarity, so a higher value is
+    a closer match. This is the opposite of an L2 distance.
     """
     results = await client.search(
         collection_name=collection,

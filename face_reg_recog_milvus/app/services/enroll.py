@@ -69,55 +69,23 @@ def _embed_sync(file_path: str) -> np.ndarray:
 
 async def embed_face(file_path: str) -> np.ndarray:
     """
-    Run the face pipeline without blocking the event loop.
+    Run the face pipeline without holding the event loop.
 
-    TODO(human): implement this.
+    The rest of this codebase became async by changing driver: redis.asyncio,
+    aiomysql and AsyncMilvusClient all release the loop while they wait on a socket.
 
-    Call _embed_sync(file_path) in a way that leaves the event loop free, and
-    translate any faces.FaceError it raises using _translate() so the caller sees a
-    domain error rather than a pipeline error.
+    _embed_sync is different. It is arithmetic in NumPy and OpenCV, so the process is
+    busy, not waiting. An `async def` around it would change nothing, because a
+    coroutine only yields at an await. The answer is a different thread, not a
+    different driver, so asyncio.to_thread runs it in the default executor.
 
-    Shape to aim for:
+    This is also why app/services/triton.py keeps the synchronous gRPC client. It
+    runs inside this worker thread, and a worker thread has no event loop.
 
-        try:
-            return await <something that runs _embed_sync off the loop>(file_path)
-        except faces.FaceError as excep:
-            raise _translate(excep) from excep
-
-    The reasoning you need to reconstruct, because it is the whole point of this
-    phase:
-
-    Everything else in this codebase became async by swapping in an async driver --
-    redis.asyncio, aiomysql, AsyncMilvusClient. That works because those operations
-    are I/O bound: the process is idle waiting on a socket, and `await` hands that
-    idle time to other tasks.
-
-    _embed_sync is different. cv2.resize, the numpy decode maths and the warpAffine
-    are CPU bound: the process is busy, not waiting. There is no async version of
-    "do arithmetic", and rewriting it as `async def` would change nothing -- a
-    coroutine that never awaits still owns the thread until it returns. Declaring
-    something `async` does not make it yield; only an actual await point does.
-
-    So the fix is not a different driver, it is a different *thread*. Look at
-    asyncio.to_thread (3.9+), which runs a blocking callable in the default executor
-    and gives you an awaitable. While it runs, the loop is free to serve other
-    requests.
-
-    This is also why app/services/triton.py still uses the SYNCHRONOUS gRPC client
-    even though tritonclient.grpc.aio exists. The Triton call happens inside
-    _embed_sync, which is already running in a worker thread -- and there is no
-    event loop in that thread for an async client to attach to. Mixing the two would
-    mean splitting the pipeline into async I/O steps with to_thread'd CPU steps
-    between them, which buys nothing here: the CPU segments are milliseconds and the
-    thread is already off the loop.
-
-    Worth knowing about the ceiling: asyncio's default executor is a
-    ThreadPoolExecutor, so concurrency is bounded by its worker count, and the
-    CPU-bound parts still contend for the GIL (though numpy and OpenCV release it
-    for the heavy operations). For this workload -- where a Triton round trip
-    dominates -- that is entirely fine. If face processing ever became the
-    bottleneck, the upgrade path is a ProcessPoolExecutor or a separate worker
-    service, not more threads.
+    The ceiling: the default executor is a thread pool, so concurrency is bounded by
+    its worker count. That is acceptable while a Triton round trip dominates the
+    time. If face processing becomes the limit, move to a process pool or a separate
+    worker service.
     """
     try:
         return await asyncio.to_thread(_embed_sync, file_path)
@@ -129,8 +97,7 @@ async def get_person(clients: Clients, table: str, person_id: int) -> PersonRead
     """
     Read a person, cache-aside: try redis, fall back to mysql, warm the cache.
 
-    Raises PersonNotFoundError so the route can answer 404 -- the old version
-    returned {"status": "failed"} with HTTP 200.
+    Raises PersonNotFoundError, so the route can answer 404.
     """
     cached = await cache.get_person(clients.redis, table, person_id)
     if cached is not None:
@@ -147,50 +114,20 @@ async def get_person(clients: Clients, table: str, person_id: int) -> PersonRead
 
 async def register_person(clients: Clients, table: str, person: PersonCreate, file_path: str) -> PersonRead:
     """
-    Register a person: embed their face, then persist across MySQL, Milvus and Redis.
+    Register a person: embed the face, then write to MySQL, Milvus and Redis.
 
-    TODO(human): implement this.
+    The three stores share no transaction, so the write cannot be atomic. The order
+    limits the damage instead. MySQL is written first, because a failure there leaves
+    nothing behind. If Milvus then fails, the MySQL row is deleted, so no vector can
+    point at a person who does not exist.
 
-    Building blocks, all already written and awaitable:
+    A failure to clean up is logged and the original error is raised, because the
+    original error is the useful one.
 
-        await embed_face(file_path)                                  -> np.ndarray
-        await persons.insert_person(clients.mysql, table, person)    -> None,
-                                     raises PersonAlreadyExistsError
-        await vectors.insert_vector(clients.milvus, FACE_COLLECTION_NAME,
-                                    person.id, embedding.tolist())   -> None
-        await persons.delete_person(clients.mysql, table, person.id) -> bool
-        await cache.set_person(clients.redis, table, record, REDIS_CACHE_TTL_SECONDS)
+    The cache write is not part of correctness. A missing entry is only a cache miss.
 
-    Return a PersonRead. You can build one with
-    PersonRead(**person.model_dump()) since PersonCreate carries every field.
-
-    The design decisions, which is why this one is yours:
-
-    1. ORDER. These are three separate systems with no shared transaction, so
-       "atomic" is not available -- despite what the old code's comment claimed.
-       What you get to choose is which failure mode you prefer. Embedding first is
-       clearly right (it is the most likely thing to fail, and it touches no
-       state). After that: if MySQL succeeds and Milvus fails, you have a person
-       who can never be recognised. If Milvus succeeds and MySQL fails, you have a
-       vector pointing at a person who does not exist -- which is the failure that
-       produced the "{person_id} does not exist" bug we hit in phase 1. Consider
-       which of those is easier to detect and to clean up.
-
-    2. COMPENSATION. Whichever you write second, decide what happens when it
-       fails. Rolling back the first write (a compensating delete) keeps the stores
-       consistent; leaving it and logging keeps the code shorter but accumulates
-       orphans. If you compensate, remember the compensating call can itself fail --
-       and that swallowing the original exception to report the cleanup failure
-       instead would hide the actual cause.
-
-    3. CACHE. The cache write is not part of correctness: a missing cache entry is
-       a miss, which is harmless. So it should never be able to fail the request.
-       Decide whether to write it at all here, or just let the first read populate
-       it.
-
-    4. DUPLICATES. Do not pre-check whether the id exists. insert_person surfaces
-       the PRIMARY KEY violation as PersonAlreadyExistsError; just let it propagate
-       and the route will answer 409. A check-then-insert is racy.
+    Duplicate ids are not checked first. insert_person reports the PRIMARY KEY
+    violation, which is race free, and the route turns it into a 409.
     """
     face_embedding = await embed_face(file_path)
     await persons.insert_person(clients.mysql, table, person)
@@ -223,7 +160,7 @@ async def recognize(clients: Clients, table: str, file_path: str) -> Recognition
         return RecognitionResult(matched=False, detector=FACE_DETECTOR, recognizer=FACE_RECOGNIZER)
 
     person_id, similarity = hits[0]
-    # COSINE: higher is closer. This comparison is inverted from the old L2 code.
+    # COSINE: a higher score is a closer match.
     if similarity < FACE_MATCH_THRESHOLD:
         logger.info("closest match %s scored %.3f, below threshold %.3f", person_id, similarity, FACE_MATCH_THRESHOLD)
         return RecognitionResult(matched=False, detector=FACE_DETECTOR, recognizer=FACE_RECOGNIZER)

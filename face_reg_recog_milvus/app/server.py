@@ -37,8 +37,8 @@ async def lifespan(app: FastAPI):
     """
     Open every client once at startup and close them at shutdown.
 
-    Anything created here is reachable from a request via app.state, which is what
-    lets routes use Depends instead of reaching for module globals.
+    Anything created here reaches a request through app.state, which is what lets
+    routes take it with Depends.
     """
     app.state.clients = await create_clients()
     try:
@@ -72,11 +72,8 @@ def get_application(title: str = "Face Registration and Recognition") -> FastAPI
     @fastapi_app.exception_handler(AppError)
     async def handle_app_error(_request: Request, exc: AppError) -> JSONResponse:
         """
-        One place decides how a domain error becomes a response.
-
-        Previously each route caught bare Exception and raised HTTPException(400),
-        so a missing person, an unreadable image and a dead database were
-        indistinguishable to the caller.
+        One place decides how a domain error becomes a response, so a missing person,
+        an unreadable image and a dead database each get their own status code.
         """
         code = status_for(exc)
         if code >= 500:
