@@ -22,8 +22,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-MODEL_REPO = Path(__file__).resolve().parent.parent / "app" / "triton_server" / "models"
-CACHE_DIR = Path(__file__).resolve().parent.parent / "app" / ".model_cache"
+MODEL_REPO = Path(__file__).resolve().parent.parent / "models"
+CACHE_DIR = Path(__file__).resolve().parent.parent / ".model_cache"
 
 BUFFALO_L = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip"
 

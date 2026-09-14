@@ -9,14 +9,18 @@ live in one readable place.
 
 import asyncio
 import logging
+import shutil
+from pathlib import Path
 
 import numpy as np
 
 from app.config import (
+    DOWNLOAD_IMAGE_PATH,
     FACE_COLLECTION_NAME,
     FACE_DET_THRESHOLD,
     FACE_DETECTOR,
     FACE_MATCH_THRESHOLD,
+    FACE_MAX_FACES,
     FACE_METRIC_TYPE,
     FACE_MIN_AREA_FRACTION,
     FACE_RECOGNIZER,
@@ -30,7 +34,7 @@ from app.errors import (
     NoFaceDetectedError,
     PersonNotFoundError,
 )
-from app.schemas import Match, PersonCreate, PersonRead, RecognitionResult
+from app.schemas import Box, FaceResult, Match, PersonCreate, PersonRead, RecognitionResult
 from app.services import faces
 
 logger = logging.getLogger("services.enroll")
@@ -93,6 +97,25 @@ async def embed_face(file_path: str) -> np.ndarray:
         raise _translate(excep) from excep
 
 
+def _detect_and_embed_sync(file_path: str) -> list[tuple[faces.Face, np.ndarray]]:
+    """Every usable face in the image, with its embedding. CPU bound."""
+    img = faces.read_image(file_path)
+    found = faces.find_faces(img, FACE_DETECTOR, FACE_DET_THRESHOLD, FACE_MIN_AREA_FRACTION)
+    if not found:
+        raise faces.NoFaceDetectedError("no faces were detected in the image")
+    if len(found) > FACE_MAX_FACES:
+        raise faces.TooManyFacesError(f"detected {len(found)} faces, at most {FACE_MAX_FACES} allowed")
+    return [(face, faces.align_and_embed(img, face, FACE_RECOGNIZER)) for face in found]
+
+
+async def detect_and_embed(file_path: str) -> list[tuple[faces.Face, np.ndarray]]:
+    """Off-loop version of _detect_and_embed_sync. See embed_face for why."""
+    try:
+        return await asyncio.to_thread(_detect_and_embed_sync, file_path)
+    except faces.FaceError as excep:
+        raise _translate(excep) from excep
+
+
 async def get_person(clients: Clients, table: str, person_id: int) -> PersonRead:
     """
     Read a person, cache-aside: try redis, fall back to mysql, warm the cache.
@@ -141,44 +164,59 @@ async def register_person(clients: Clients, table: str, person: PersonCreate, fi
             logger.error("failed to clean up person %s after vector insert failure: %s", person.id, cleanup_excep)
         raise
     await cache.set_person(clients.redis, table, PersonRead(**person.model_dump()), REDIS_CACHE_TTL_SECONDS)
+    await _store_image(file_path, person.id)
     return PersonRead(**person.model_dump())
+
+
+async def _store_image(file_path: str, person_id: int) -> None:
+    """
+    Keep the registration photograph, so it can be shown later.
+
+    Best effort on purpose. The vector is what recognition needs; the photograph is
+    only a record. A failed copy leaves the person registered and working, and
+    GET /persons/{id}/image answers 404 for them.
+
+    shutil.copy blocks, so it runs off the loop like every other blocking call.
+    """
+    try:
+        destination = Path(DOWNLOAD_IMAGE_PATH) / f"{person_id}.jpg"
+        await asyncio.to_thread(shutil.copy, file_path, destination)
+    except OSError as excep:
+        logger.warning("could not store the image for person %s: %s", person_id, excep)
 
 
 async def recognize(clients: Clients, table: str, file_path: str) -> RecognitionResult:
     """
-    Identify the face in an image against the registered population.
+    Identify every face in an image against the registered population.
 
-    Worked example for the pattern register_person() needs: embed, hit a store,
-    translate the outcome into a schema object.
+    A face nobody matches is reported with matched=false. That is an answer, not a
+    failure, so the reply is still 200.
     """
-    embedding = await embed_face(file_path)
+    found = await detect_and_embed(file_path)
 
-    hits = await vectors.search(
-        clients.milvus, FACE_COLLECTION_NAME, embedding.tolist(), FACE_METRIC_TYPE, limit=1
-    )
-    if not hits:
-        return RecognitionResult(matched=False, detector=FACE_DETECTOR, recognizer=FACE_RECOGNIZER)
+    results: list[FaceResult] = []
+    for face, embedding in found:
+        box = face.bbox.astype(int).tolist()
+        result = FaceResult(
+            box=Box(x1=box[0], y1=box[1], x2=box[2], y2=box[3]),
+            score=face.score,
+            matched=False,
+        )
+        hits = await vectors.search(
+            clients.milvus, FACE_COLLECTION_NAME, embedding.tolist(), FACE_METRIC_TYPE, limit=1
+        )
+        # COSINE: a higher score is a closer match.
+        if hits and hits[0][1] >= FACE_MATCH_THRESHOLD:
+            person_id, similarity = hits[0]
+            try:
+                result.match = Match(person=await get_person(clients, table, person_id), similarity=similarity)
+                result.matched = True
+            except PersonNotFoundError:
+                # A vector outlived its person row, so the two stores have drifted.
+                logger.error("milvus holds a vector for person %s with no mysql row", person_id)
+        results.append(result)
 
-    person_id, similarity = hits[0]
-    # COSINE: a higher score is a closer match.
-    if similarity < FACE_MATCH_THRESHOLD:
-        logger.info("closest match %s scored %.3f, below threshold %.3f", person_id, similarity, FACE_MATCH_THRESHOLD)
-        return RecognitionResult(matched=False, detector=FACE_DETECTOR, recognizer=FACE_RECOGNIZER)
-
-    try:
-        person = await get_person(clients, table, person_id)
-    except PersonNotFoundError:
-        # A vector outlived its person row. Report no match rather than 500, and
-        # leave a loud log line -- this means the two stores have drifted.
-        logger.error("milvus holds a vector for person %s with no mysql row", person_id)
-        return RecognitionResult(matched=False, detector=FACE_DETECTOR, recognizer=FACE_RECOGNIZER)
-
-    return RecognitionResult(
-        matched=True,
-        match=Match(person=person, similarity=similarity),
-        detector=FACE_DETECTOR,
-        recognizer=FACE_RECOGNIZER,
-    )
+    return RecognitionResult(faces=results, detector=FACE_DETECTOR, recognizer=FACE_RECOGNIZER)
 
 
 async def unregister_person(clients: Clients, table: str, person_id: int) -> None:

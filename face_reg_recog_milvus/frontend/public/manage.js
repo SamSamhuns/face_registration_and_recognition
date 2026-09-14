@@ -30,9 +30,14 @@ async function remove(id, name) {
 async function load() {
   try {
     const page = await request(`${API}/persons?limit=${LIMIT}&offset=${offset}`);
+    // Release the previous page's blob URLs before replacing the rows, or every
+    // page view leaks one image for the life of the tab.
+    rows.querySelectorAll("img.thumb").forEach((img) => URL.revokeObjectURL(img.src));
+
     rows.innerHTML = page.items
       .map(
         (p) => `<tr>
+          <td><img class="thumb" data-image-for="${p.id}" alt=""></td>
           <td>${p.id}</td><td>${escapeHtml(p.name)}</td><td>${p.birthdate}</td>
           <td>${escapeHtml(p.country)}</td><td>${escapeHtml(p.city)}</td>
           <td><button class="danger" data-id="${p.id}" data-name="${escapeHtml(p.name)}">Remove</button></td>
@@ -41,7 +46,17 @@ async function load() {
       .join("");
 
     if (page.total === 0) {
-      rows.innerHTML = `<tr><td colspan="6" class="muted">Nobody registered yet.</td></tr>`;
+      rows.innerHTML = `<tr><td colspan="7" class="muted">Nobody registered yet.</td></tr>`;
+    }
+
+    // Faces load one at a time after the table, so a slow image never holds up the
+    // list. A person with no stored image simply keeps an empty box.
+    for (const img of rows.querySelectorAll("img.thumb")) {
+      fetchImageUrl(`${API}/persons/${img.dataset.imageFor}/image`)
+        .then((url) => {
+          img.src = url;
+        })
+        .catch(() => {});
     }
     count.textContent = `${offset + page.items.length} of ${page.total}`;
     prev.disabled = offset === 0;

@@ -12,6 +12,7 @@ records, and Redis caches reads. NVIDIA Triton serves the models.
 
 - **Three detectors and three recognisers**, chosen by environment variable
 - **Landmark alignment**, which holds recognition accuracy when the head is tilted
+- **Every face in the picture**, each with its box and its own match
 - **Async throughout**, so one slow request does not block the others
 - **REST API** with OpenAPI documentation at `/docs`
 
@@ -29,14 +30,18 @@ cd face_reg_recog_milvus
 # 1. Create the environment file. Change the passwords before you expose any port.
 cp .env.example .env
 
-# 2. Download the model weights, about 880 MB, verified by checksum.
+# 2. Set an API key. The server refuses to start without one, so the service is
+#    never accidentally open.
+echo "API_KEY=$(openssl rand -hex 32)" >> .env
+
+# 3. Download the model weights, about 880 MB, verified by checksum.
 python3 scripts/download_models.py
 
-# 3. Make a development certificate. Add your LAN address to use the camera
+# 4. Make a development certificate. Add your LAN address to use the camera
 #    from another device.
 ./scripts/generate_dev_cert.sh
 
-# 4. Start every service.
+# 5. Start every service.
 docker compose up -d
 ```
 
@@ -45,11 +50,14 @@ The web pages are at <https://localhost:8443>. The camera needs HTTPS or localho
 Then register a face and find it again:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/persons \
+KEY=$(grep '^API_KEY=' face_reg_recog_milvus/.env | cut -d= -f2)
+
+curl -H "X-API-Key: $KEY" -X POST http://localhost:8080/api/v1/persons \
   -F id=1 -F name=alice -F birthdate=1990-01-01 -F country=NP \
   -F image=@face.jpg
 
-curl -X POST http://localhost:8080/api/v1/recognitions -F image=@probe.jpg
+curl -H "X-API-Key: $KEY" -X POST http://localhost:8080/api/v1/recognitions \
+  -F image=@probe.jpg
 ```
 
 Interactive documentation is at <http://localhost:8080/docs>. Check that the service

@@ -51,23 +51,41 @@ class PersonList(BaseModel):
     offset: int
 
 
+class Box(BaseModel):
+    """Face position in the original image, in pixels."""
+
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+
 class Match(BaseModel):
-    """The closest registered person for a probe image."""
+    """The closest registered person for one face."""
 
     person: PersonRead
     similarity: float = Field(description="cosine similarity in [-1, 1]; higher is closer")
+
+
+class FaceResult(BaseModel):
+    """One detected face, and who it is."""
+
+    box: Box
+    score: float = Field(description="detector confidence")
+    matched: bool
+    match: Match | None = None
 
 
 class RecognitionResult(BaseModel):
     """
     Outcome of POST /recognitions.
 
-    `matched: false` is a successful request with a negative answer, so it is a 200
-    and not an error. Only a request we could not process at all becomes non-2xx.
+    `faces` holds every face the detector found, best confidence first. A face with
+    `matched: false` is a successful answer, not an error, so the whole reply is
+    200 even when nobody is recognised.
     """
 
-    matched: bool
-    match: Match | None = None
+    faces: list[FaceResult]
     detector: str
     recognizer: str
 

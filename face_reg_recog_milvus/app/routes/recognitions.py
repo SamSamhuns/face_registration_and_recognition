@@ -16,9 +16,10 @@ from app.config import MYSQL_CUR_TABLE
 from app.deps import Clients, get_clients
 from app.routes.persons import image_source
 from app.schemas import RecognitionResult
+from app.security import require_api_key
 from app.services import enroll, images
 
-router = APIRouter(prefix="/recognitions", tags=["recognition"])
+router = APIRouter(prefix="/recognitions", tags=["recognition"], dependencies=[Depends(require_api_key)])
 logger = logging.getLogger("routes.recognitions")
 
 

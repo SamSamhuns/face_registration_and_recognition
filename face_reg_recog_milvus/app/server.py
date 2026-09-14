@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import API_V1_PREFIX, CORS_ALLOW_CREDENTIALS, CORS_ALLOW_ORIGINS
+from app.config import API_KEY, API_V1_PREFIX, CORS_ALLOW_CREDENTIALS, CORS_ALLOW_ORIGINS
 from app.deps import close_clients, create_clients
 from app.errors import AppError, status_for
 from app.routes import health, persons, recognitions
@@ -40,6 +40,10 @@ async def lifespan(app: FastAPI):
     Anything created here reaches a request through app.state, which is what lets
     routes take it with Depends.
     """
+    # Refuse to start rather than serve an open API. This is in the lifespan, not
+    # in config, so importing the package for a script or a test needs no key.
+    if not API_KEY:
+        raise RuntimeError("API_KEY is not set. Generate one with: openssl rand -hex 32")
     app.state.clients = await create_clients()
     try:
         yield

@@ -11,15 +11,17 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
-from app.config import MYSQL_CUR_TABLE
+from app.config import DOWNLOAD_IMAGE_PATH, MYSQL_CUR_TABLE
 from app.db import persons as persons_db
 from app.deps import Clients, get_clients
-from app.errors import ValidationError
+from app.errors import PersonNotFoundError, ValidationError
 from app.schemas import PersonCreate, PersonList, PersonRead
+from app.security import require_api_key
 from app.services import enroll, images
 
-router = APIRouter(prefix="/persons", tags=["persons"])
+router = APIRouter(prefix="/persons", tags=["persons"], dependencies=[Depends(require_api_key)])
 logger = logging.getLogger("routes.persons")
 
 
@@ -115,3 +117,29 @@ async def delete_person(
 ) -> None:
     """204 with an empty body is the conventional answer to a successful DELETE."""
     await enroll.unregister_person(clients, MYSQL_CUR_TABLE, person_id)
+
+
+@router.get(
+    "/{person_id}/image",
+    response_class=FileResponse,
+    summary="Stored face image",
+    responses={200: {"content": {"image/jpeg": {}}, "description": "The image used at registration"}},
+)
+async def get_person_image(
+    person_id: int,
+    clients: Annotated[Clients, Depends(get_clients)],
+) -> FileResponse:
+    """
+    Return the image the person was registered with.
+
+    `person_id` is declared as int, so FastAPI rejects anything else before this
+    runs. That is what keeps the filename below free of path traversal: no caller
+    can put a slash or a dot-dot into it.
+    """
+    # Look the person up first, so "no such person" and "image missing" differ.
+    await enroll.get_person(clients, MYSQL_CUR_TABLE, person_id)
+
+    path = Path(DOWNLOAD_IMAGE_PATH) / f"{person_id}.jpg"
+    if not path.is_file():
+        raise PersonNotFoundError(f"no stored image for person {person_id}")
+    return FileResponse(path, media_type="image/jpeg")

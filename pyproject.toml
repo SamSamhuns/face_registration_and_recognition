@@ -11,6 +11,7 @@ dependencies = [
     "aiofiles (>=24.1.0,<25.0.0)",
     "aiomysql (>=0.3.2,<1.0.0)",
     "fastapi (>=0.129.0,<0.130.0)",
+    "starlette==0.52.1",
     "httpx (>=0.28.1,<1.0.0)",
     "opencv-python-headless (>=4.12.0.88,<5.0.0)",
     "pillow (>=12.1.1,<13.0.0)",

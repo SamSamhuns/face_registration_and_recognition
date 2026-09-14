@@ -291,6 +291,19 @@ class TooManyFacesError(FaceError):
     pass
 
 
+def find_faces(
+    img: np.ndarray, detector: str, det_thresh: float = 0.5, min_area_fraction: float = 0.0
+) -> list[Face]:
+    """Detect faces and drop any that are too small. Best confidence first."""
+    img_h, img_w = img.shape[:2]
+    return [f for f in detect(img, detector, det_thresh) if f.area_fraction(img_h, img_w) >= min_area_fraction]
+
+
+def align_and_embed(img: np.ndarray, face: Face, recognizer: str) -> np.ndarray:
+    """Align one detected face and embed it."""
+    return embed(align(img, face.kps), recognizer)
+
+
 def embed_primary_face(
     img: np.ndarray,
     detector: str,
@@ -302,19 +315,15 @@ def embed_primary_face(
     """
     detect -> align -> embed, for the highest-scoring face in `img`.
 
-    Raises NoFaceDetectedError / TooManyFacesError so the caller can map them onto distinct HTTP
-    responses instead of collapsing every failure into one 400.
+    Raises NoFaceDetectedError / TooManyFacesError so the caller can map them onto
+    distinct HTTP responses instead of collapsing every failure into one 400.
     """
-    img_h, img_w = img.shape[:2]
-    found = [f for f in detect(img, detector, det_thresh) if f.area_fraction(img_h, img_w) >= min_area_fraction]
-
+    found = find_faces(img, detector, det_thresh, min_area_fraction)
     if not found:
         raise NoFaceDetectedError("no faces were detected in the image")
     if len(found) > max_faces:
         raise TooManyFacesError(f"detected {len(found)} faces, at most {max_faces} allowed")
-
-    face = found[0]  # detect() returns highest-confidence first
-    return embed(align(img, face.kps), recognizer), face
+    return align_and_embed(img, found[0], recognizer), found[0]
 
 
 def read_image(path: str) -> np.ndarray:

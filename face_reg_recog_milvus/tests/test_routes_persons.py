@@ -91,3 +91,30 @@ async def test_list_is_paginated(client, clean_stores, one_face):
     assert body["total"] == 1
     assert body["limit"] == 5
     assert [item["id"] for item in body["items"]] == [-408]
+
+
+async def test_registration_still_refuses_two_faces(client, clean_stores, two_faces):
+    """Recognition accepts a crowd. Registration must not: a record needs one face."""
+    response = await client.post(
+        "/api/v1/persons",
+        data=form_fields(person(-409)),
+        files={"image": ("two.jpg", two_faces, "image/jpeg")},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"] == "MultipleFacesError"
+
+
+async def test_stored_image_is_served(client, clean_stores, one_face):
+    await client.post(
+        "/api/v1/persons",
+        data=form_fields(person(-410)),
+        files={"image": ("face.jpg", one_face, "image/jpeg")},
+    )
+    response = await client.get("/api/v1/persons/-410/image")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert len(response.content) > 0
+
+
+async def test_image_for_unknown_person_returns_404(client, clean_stores):
+    assert (await client.get("/api/v1/persons/-9999/image")).status_code == 404

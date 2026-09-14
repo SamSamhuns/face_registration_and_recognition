@@ -21,8 +21,10 @@ from httpx import ASGITransport, AsyncClient
 
 TEST_TABLE = "test_person"
 TEST_COLLECTION = "test_faces"
+TEST_API_KEY = "test-key-not-a-secret"
 os.environ["MYSQL_CUR_TABLE"] = TEST_TABLE
 os.environ["FACE_COLLECTION_NAME"] = TEST_COLLECTION
+os.environ["API_KEY"] = TEST_API_KEY
 
 # ruff: noqa: E402 -- app.config reads the variables set above at import time.
 from app.config import FACE_COLLECTION_NAME, MYSQL_PERSON_TABLE
@@ -110,7 +112,18 @@ async def clients():
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def client(clients):
-    """An HTTP client bound to the running app."""
+    """An HTTP client bound to the running app, carrying the API key."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-API-Key": TEST_API_KEY},
+    ) as http_client:
+        yield http_client
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def anonymous(clients):
+    """A client with no API key, for checking that routes are closed."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http_client:
         yield http_client
 

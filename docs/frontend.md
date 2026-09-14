@@ -59,6 +59,16 @@ frontend/
 No build step, no package manager, no framework. Edit a file and reload the page.
 The directory is bind-mounted, so nginx needs no restart.
 
+## The API key in the browser
+
+Every page has an API key box in its header. The key goes to `localStorage` and rides
+on each request as `X-API-Key`.
+
+A key in `localStorage` is readable by any script on that origin. That is the accepted
+cost of a shared key in a browser: the key is only as private as the page holding it.
+Anything needing real secrecy needs a session cookie the page cannot read, not a
+static key.
+
 ## Things that will catch you
 
 **`client_max_body_size`.** nginx allows 1 MB by default and answers 413 before the
@@ -71,5 +81,7 @@ third argument. Without it the part carries no content type and the API answers 
 **Stop the camera.** A stream that is not stopped keeps the camera light on. The
 pages call `stopCamera()` after a capture.
 
-**The manage page shows no photographs.** Registered images are stored in the
-`person_images` volume, but no endpoint serves them. Showing them needs a new route.
+**An `<img src>` carries no custom header.** It is a plain GET, so it cannot send the
+API key and comes back 401. The manage page fetches each face with `fetch()`, then
+hands the element a `blob:` URL. Those URLs are revoked when the page changes, or the
+blobs stay in memory for the life of the tab.

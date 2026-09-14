@@ -19,10 +19,17 @@ cd face_reg_recog_milvus
 # 1. Create the environment file. Change the passwords before you expose any port.
 cp .env.example .env
 
-# 2. Download the model weights. This writes into the Triton model repository.
+# 2. Set an API key. Every /api/v1 route needs it, and the server will not start
+#    without one.
+echo "API_KEY=$(openssl rand -hex 32)" >> .env
+
+# 3. Download the model weights. This writes into the Triton model repository.
 python3 scripts/download_models.py
 
-# 3. Start every service.
+# 4. Make a development certificate for the HTTPS frontend.
+./scripts/generate_dev_cert.sh
+
+# 5. Start every service.
 docker compose up -d
 ```
 
@@ -34,6 +41,8 @@ Check that the service can reach its dependencies:
 ```bash
 curl http://localhost:8080/health/ready
 ```
+
+`/health` needs no key. Everything under `/api/v1` does.
 
 ## Ports
 
@@ -76,7 +85,7 @@ The API image excludes the model weights through `.dockerignore`. Triton reads t
 from a bind mount, so the API never needs a copy. Without that exclusion the image
 grows by about 1.9 GB, and a `chown -R` after the copy would double it again.
 
-`app/.model_cache` holds the downloaded archives so a repeat download is cheap. It is
+`.model_cache` holds the downloaded archives so a repeat download is cheap. It is
 safe to delete at any time.
 
 ## Tests

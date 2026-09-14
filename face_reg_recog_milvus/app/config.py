@@ -28,6 +28,11 @@ dictConfig(log_cfg.model_dump())
 FASTAPI_SERVER_PORT = int(os.getenv("FASTAPI_SERVER_PORT", default="8080"))
 API_V1_PREFIX = "/api/v1"
 
+# Shared secret for every /api/v1 route. There is no default: the server refuses to
+# start without one, so the service is never accidentally open. Generate one with
+#   openssl rand -hex 32
+API_KEY = os.getenv("API_KEY", default="")
+
 # CORS. Note allow_credentials=True is INVALID alongside a "*" origin -- browsers
 # reject that combination -- so credentials are only enabled for an explicit list.
 CORS_ALLOW_ORIGINS = [o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", default="*").split(",") if o.strip()]
@@ -78,6 +83,10 @@ FACE_RECOGNIZER = os.getenv("FACE_RECOGNIZER", default="arcface_r50")
 FACE_DET_THRESHOLD = float(os.getenv("FACE_DET_THRESHOLD", default="0.5"))
 # reject faces smaller than this fraction of the frame (0.001 == 0.1%)
 FACE_MIN_AREA_FRACTION = float(os.getenv("FACE_MIN_AREA_FRACTION", default="0.001"))
+# Upper bound on faces processed from one image. Each face costs an alignment, an
+# embedding and a vector search, so a crowd photograph is a cheap way to load the
+# service. Registration always needs exactly one face, whatever this is set to.
+FACE_MAX_FACES = int(os.getenv("FACE_MAX_FACES", default="10"))
 
 # every supported recogniser emits 512-d embeddings
 FACE_VECTOR_DIM = 512

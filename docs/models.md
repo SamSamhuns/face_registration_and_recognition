@@ -8,13 +8,13 @@ python3 scripts/download_models.py            # everything that is missing
 python3 scripts/download_models.py scrfd_10g  # one model
 ```
 
-The script writes into `app/triton_server/models/<name>/1/model.onnx`, which Docker
+The script writes into `models/<name>/1/model.onnx`, which Docker
 Compose mounts into Triton. The weights are not tracked by Git.
 
 Each file is pinned by a SHA256 checksum. The script stops if a checksum does not
 match. Do not replace the recorded checksum until you know why the file changed.
 
-Downloads are cached in `app/.model_cache`, so a repeated run costs nothing. You can
+Downloads are cached in `.model_cache`, so a repeated run costs nothing. You can
 delete that directory at any time.
 
 ## Available models

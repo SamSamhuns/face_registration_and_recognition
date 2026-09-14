@@ -52,6 +52,10 @@ class MultipleFacesError(AppError):
     """More faces than the endpoint accepts."""
 
 
+class AuthenticationError(AppError):
+    """No API key, or the wrong one."""
+
+
 # --- resource state --------------------------------------------------------------
 class PersonNotFoundError(AppError):
     """No person with that id."""
@@ -79,17 +83,15 @@ def status_for(exc: AppError) -> int:
 # Built once at import, not per call: a wrong constant name then fails at import
 # instead of on the first error response.
 #
-# Keep HTTP_413_REQUEST_ENTITY_TOO_LARGE. Starlette renamed it to
-# HTTP_413_CONTENT_TOO_LARGE, but that spelling does not exist before Starlette 0.48,
-# and fastapi 0.129 accepts a range of Starlette versions. Only this spelling works
-# across all of them. Newer versions mark it deprecated, which is a warning, not a
-# failure.
+# Built once at import, not per call: a wrong constant name then fails at import
+# instead of on the first error response.
 _STATUS_BY_ERROR: dict[type[AppError], int] = {
+    AuthenticationError: status.HTTP_401_UNAUTHORIZED,
     PersonNotFoundError: status.HTTP_404_NOT_FOUND,
     PersonAlreadyExistsError: status.HTTP_409_CONFLICT,
     NoFaceDetectedError: status.HTTP_422_UNPROCESSABLE_ENTITY,
     MultipleFacesError: status.HTTP_422_UNPROCESSABLE_ENTITY,
-    PayloadTooLargeError: status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+    PayloadTooLargeError: status.HTTP_413_CONTENT_TOO_LARGE,
     UnsupportedMediaTypeError: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
     InvalidImageError: status.HTTP_400_BAD_REQUEST,
     ImageSourceError: status.HTTP_400_BAD_REQUEST,

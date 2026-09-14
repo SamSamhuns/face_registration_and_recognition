@@ -2,6 +2,24 @@
 
 Base path: `/api/v1`. Interactive documentation: `/docs`.
 
+## Authentication
+
+Every `/api/v1` route needs a shared key in the `X-API-Key` header. Without it the
+answer is **401**.
+
+```bash
+curl -H "X-API-Key: $API_KEY" http://localhost:8080/api/v1/persons
+```
+
+Set `API_KEY` in `.env`. The server refuses to start without one, so the service is
+never accidentally open. Generate a key with `openssl rand -hex 32`.
+
+`/health` and `/health/ready` stay open, because a load balancer probe cannot carry
+a secret.
+
+One key for everyone. There is no per-client identity, and revoking one client means
+changing the key for all of them.
+
 Every error uses the same body.
 
 ```json
@@ -44,8 +62,9 @@ curl -X POST http://localhost:8080/api/v1/persons \
 | 422 | No face in the image, more than one face, or a bad form field. |
 | 503 | A dependency is unavailable. |
 
-The image must contain exactly one face. The face must fill at least
-`FACE_MIN_AREA_FRACTION` of the frame.
+Registration needs exactly **one** face, and answers 422 for a group photograph. A
+person record must point at an unambiguous face. Recognition has no such limit.
+The face must fill at least `FACE_MIN_AREA_FRACTION` of the frame.
 
 ## Identify a face
 
@@ -56,26 +75,38 @@ the same way.
 curl -X POST http://localhost:8080/api/v1/recognitions -F image=@probe.jpg
 ```
 
-A match:
+Every face in the image is reported, most confident first.
 
 ```json
 {
-  "matched": true,
-  "match": { "person": { "id": 1, "name": "alice", "...": "..." }, "similarity": 0.97 },
+  "faces": [
+    {
+      "box": { "x1": 551, "y1": 59, "x2": 710, "y2": 293 },
+      "score": 0.90,
+      "matched": true,
+      "match": { "person": { "id": 1, "name": "alice", "...": "..." }, "similarity": 0.97 }
+    },
+    {
+      "box": { "x1": 310, "y1": 94, "x2": 470, "y2": 333 },
+      "score": 0.84,
+      "matched": false,
+      "match": null
+    }
+  ],
   "detector": "scrfd_10g",
   "recognizer": "arcface_r50"
 }
 ```
 
-No match:
+`box` is in the pixels of the image you sent. `score` is detector confidence.
 
-```json
-{ "matched": false, "match": null, "detector": "scrfd_10g", "recognizer": "arcface_r50" }
-```
+A face nobody matches is **200** with `matched: false`. The request succeeded; the
+answer is negative. `similarity` is cosine similarity from -1 to 1, higher is closer,
+and a person is returned only above `FACE_MATCH_THRESHOLD`.
 
-No match is **200**, not an error. The request succeeded; the answer is negative.
-`similarity` is cosine similarity, from -1 to 1. Higher is closer. A person is
-returned only above `FACE_MATCH_THRESHOLD`.
+`FACE_MAX_FACES`, 10 by default, caps how many faces one image may contain. Each face
+costs an alignment, an embedding and a vector search, so a crowd photograph is
+otherwise a cheap way to load the service.
 
 | Status | Meaning |
 | --- | --- |
@@ -97,6 +128,14 @@ returned only above `FACE_MATCH_THRESHOLD`.
 `GET /api/v1/persons/{id}` gives 200 with the record, or 404.
 
 The service reads Redis first, then MySQL. A MySQL read fills the cache.
+
+## Read the stored face image
+
+`GET /api/v1/persons/{id}/image` returns the photograph the person was registered
+with, as `image/jpeg`. 404 when there is no such person, or no stored image for them.
+
+The image is saved on a best-effort basis at registration. A failed save leaves the
+person registered and recognisable, and this route answers 404 for them.
 
 ## Remove a person
 

@@ -92,7 +92,7 @@ services:
       - ${TRITON_SERVER_PORT:-8001}:8001
     volumes:
       # bind-mounted, not COPYed: swapping model weights needs no image rebuild
-      - ./app/triton_server/models:/models:ro
+      - ./models:/models:ro
     healthcheck:
       test:
         [

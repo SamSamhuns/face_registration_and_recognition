@@ -12,7 +12,7 @@ from fastapi import status
         (errors.PersonAlreadyExistsError, status.HTTP_409_CONFLICT),
         (errors.NoFaceDetectedError, status.HTTP_422_UNPROCESSABLE_ENTITY),
         (errors.MultipleFacesError, status.HTTP_422_UNPROCESSABLE_ENTITY),
-        (errors.PayloadTooLargeError, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE),
+        (errors.PayloadTooLargeError, status.HTTP_413_CONTENT_TOO_LARGE),
         (errors.UnsupportedMediaTypeError, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE),
         (errors.InvalidImageError, status.HTTP_400_BAD_REQUEST),
         (errors.ImageSourceError, status.HTTP_400_BAD_REQUEST),

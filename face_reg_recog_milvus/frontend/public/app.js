@@ -5,6 +5,12 @@
 // CORS preflight, and no mixed content warning on an https page.
 
 const API = "/api/v1";
+const KEY_STORAGE = "faceApiKey";
+
+/** The API key this browser holds. Empty until somebody types one in. */
+function apiKey() {
+  return localStorage.getItem(KEY_STORAGE) || "";
+}
 
 // --------------------------------------------------------------------- requests
 
@@ -22,7 +28,11 @@ function readError(body, status) {
 
 /** Send a request. Returns parsed JSON, or null for 204. Throws on any error. */
 async function request(path, options = {}) {
-  const response = await fetch(path, options);
+  const headers = { ...(options.headers || {}), "X-API-Key": apiKey() };
+  const response = await fetch(path, { ...options, headers });
+  if (response.status === 401) {
+    throw new Error("The API key is missing or wrong. Set it at the top of the page.");
+  }
   if (response.status === 204) return null;
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new Error(readError(body, response.status));
@@ -107,6 +117,22 @@ function stopCamera(stream) {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
+/**
+ * Fetch an image from a protected route and return an object URL for it.
+ *
+ * An <img src="..."> is a plain GET that carries no custom header, so it cannot
+ * send the API key and would come back 401. Fetching it here, then handing the
+ * element a blob: URL, is the way to show an image from an authenticated route.
+ *
+ * The caller should revokeObjectURL when the image is gone, or the blob stays in
+ * memory for the life of the page.
+ */
+async function fetchImageUrl(path) {
+  const response = await fetch(path, { headers: { "X-API-Key": apiKey() } });
+  if (!response.ok) throw new Error(`image request failed with status ${response.status}`);
+  return URL.createObjectURL(await response.blob());
+}
+
 // -------------------------------------------------------------------------- nav
 
 /** Mark the current page in the header. */
@@ -116,4 +142,31 @@ function markActiveLink() {
     if (a.getAttribute("href") === here) a.classList.add("active");
   });
 }
-document.addEventListener("DOMContentLoaded", markActiveLink);
+
+/**
+ * Put an API key box in the header of every page.
+ *
+ * The key lives in localStorage, so it is readable by any script on this origin.
+ * That is the accepted cost of a shared key in a browser: the key is only as
+ * private as the page holding it. Anything that needs real secrecy needs a session
+ * the browser cannot read, not a static key.
+ */
+function addKeyControl() {
+  const header = document.querySelector("header");
+  if (!header) return;
+  const input = document.createElement("input");
+  input.type = "password";
+  input.placeholder = "API key";
+  input.className = "apikey";
+  input.value = apiKey();
+  input.addEventListener("change", () => {
+    localStorage.setItem(KEY_STORAGE, input.value.trim());
+    location.reload();
+  });
+  header.appendChild(input);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  markActiveLink();
+  addKeyControl();
+});
