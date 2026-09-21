@@ -4,8 +4,10 @@ Background material on attacking and protecting a face recognition system. None 
 this is implemented by the service. It records what the threats are and which
 countermeasures exist.
 
-> The API has no authentication. Do not put it on an untrusted network without a
-> gateway in front of it.
+For who may call the API, and how that is enforced, see [auth.md](auth.md). This
+document is about the face pipeline itself, which authentication does not protect: a
+permitted operator holding a photograph of somebody else is still a presentation
+attack.
 
 ## Attacks
 

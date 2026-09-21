@@ -30,9 +30,9 @@ cd face_reg_recog_milvus
 # 1. Create the environment file. Change the passwords before you expose any port.
 cp .env.example .env
 
-# 2. Set an API key. The server refuses to start without one, so the service is
-#    never accidentally open.
-echo "API_KEY=$(openssl rand -hex 32)" >> .env
+# 2. Secrets for Authentik, which holds the accounts.
+echo "AUTHENTIK_SECRET_KEY=$(openssl rand -hex 32)" >> .env
+echo "AUTHENTIK_POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
 
 # 3. Download the model weights, about 880 MB, verified by checksum.
 python3 scripts/download_models.py
@@ -43,20 +43,25 @@ python3 scripts/download_models.py
 
 # 5. Start every service.
 docker compose up -d
+
+# 6. Set up Authentik: create the first administrator at
+#    http://localhost:9000/if/flow/initial-setup/, then add the OAuth2 provider and
+#    the face-admin and face-operator groups. Put the client id and issuer into .env
+#    as OIDC_CLIENT_ID and OIDC_ISSUER, and restart the api. Steps in docs/auth.md.
 ```
 
 The web pages are at <https://localhost:8443>. The camera needs HTTPS or localhost.
+Opening one sends you to Authentik to sign in.
 
-Then register a face and find it again:
+Then register a face and find it again. `$TOKEN` is an access token from Authentik,
+for an account in `face-admin`:
 
 ```bash
-KEY=$(grep '^API_KEY=' face_reg_recog_milvus/.env | cut -d= -f2)
-
-curl -H "X-API-Key: $KEY" -X POST http://localhost:8080/api/v1/persons \
+curl -H "Authorization: Bearer $TOKEN" -X POST http://localhost:8080/api/v1/persons \
   -F id=1 -F name=alice -F birthdate=1990-01-01 -F country=NP \
   -F image=@face.jpg
 
-curl -H "X-API-Key: $KEY" -X POST http://localhost:8080/api/v1/recognitions \
+curl -H "Authorization: Bearer $TOKEN" -X POST http://localhost:8080/api/v1/recognitions \
   -F image=@probe.jpg
 ```
 
@@ -68,6 +73,7 @@ can reach its dependencies with `curl http://localhost:8080/health/ready`.
 | Document | Contents |
 | --- | --- |
 | [docs/README.md](docs/README.md) | Quick start, ports, tests, and lint |
+| [docs/auth.md](docs/auth.md) | Authentik, the two groups, and signing in |
 | [docs/architecture.md](docs/architecture.md) | Services, code layers, and the path of one request |
 | [docs/api.md](docs/api.md) | HTTP endpoints, status codes, and examples |
 | [docs/models.md](docs/models.md) | Face models, downloads, and how to change them |

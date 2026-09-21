@@ -4,21 +4,32 @@ Base path: `/api/v1`. Interactive documentation: `/docs`.
 
 ## Authentication
 
-Every `/api/v1` route needs a shared key in the `X-API-Key` header. Without it the
-answer is **401**.
+Every `/api/v1` route needs an access token issued by Authentik, in the
+`Authorization` header. Without one the answer is **401**.
 
 ```bash
-curl -H "X-API-Key: $API_KEY" http://localhost:8080/api/v1/persons
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/persons
 ```
 
-Set `API_KEY` in `.env`. The server refuses to start without one, so the service is
-never accidentally open. Generate a key with `openssl rand -hex 32`.
+The API verifies the signature against Authentik's published public key, and checks
+the issuer, the audience and the expiry. It holds no passwords and no shared key.
 
-`/health` and `/health/ready` stay open, because a load balancer probe cannot carry
-a secret.
+Authorization is by Authentik group, carried in the token's `groups` claim:
 
-One key for everyone. There is no per-client identity, and revoking one client means
-changing the key for all of them.
+| Group | May |
+| --- | --- |
+| `face-operator` | `POST /recognitions`, and read `/persons` |
+| `face-admin` | that, and `POST` or `DELETE` a person |
+
+A verified token from an account in neither group is refused with **403**. The two
+are different answers on purpose: 401 means the caller is nobody, 403 means the
+caller is known and not permitted.
+
+Open without a token: `/health` and `/health/ready`, because a load balancer probe
+cannot carry one, and `/api/v1/auth/config`, because the browser reads it before it
+has one.
+
+[auth.md](auth.md) has the Authentik setup and the failures worth recognising.
 
 Every error uses the same body.
 
@@ -161,8 +172,7 @@ and 503 when any fails. Use it for a load balancer.
 
 ## Notes
 
-There is no authentication. Do not expose this service to an untrusted network
-without a gateway in front of it.
+Every route under `/api/v1` needs a token, and a group. See [auth.md](auth.md).
 
 `image_url` refuses addresses that resolve to private, loopback or link-local
 ranges. The download has a size limit and a time limit.

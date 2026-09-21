@@ -6,6 +6,7 @@
 | [api.md](api.md) | HTTP endpoints, status codes, and examples |
 | [models.md](models.md) | Face models, how to download them, and how to change them |
 | [frontend.md](frontend.md) | The web pages, HTTPS, and the nginx proxy |
+| [auth.md](auth.md) | Authentik, the two groups, and signing in |
 | [security.md](security.md) | Attacks on face recognition, and countermeasures |
 
 ## Quick start
@@ -19,9 +20,9 @@ cd face_reg_recog_milvus
 # 1. Create the environment file. Change the passwords before you expose any port.
 cp .env.example .env
 
-# 2. Set an API key. Every /api/v1 route needs it, and the server will not start
-#    without one.
-echo "API_KEY=$(openssl rand -hex 32)" >> .env
+# 2. Secrets for Authentik, which holds the accounts.
+echo "AUTHENTIK_SECRET_KEY=$(openssl rand -hex 32)" >> .env
+echo "AUTHENTIK_POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> .env
 
 # 3. Download the model weights. This writes into the Triton model repository.
 python3 scripts/download_models.py
@@ -31,6 +32,11 @@ python3 scripts/download_models.py
 
 # 5. Start every service.
 docker compose up -d
+
+# 6. Create the first Authentik administrator, then make the OAuth2 provider and the
+#    two groups. Put the client id and issuer it gives you into .env, and restart the
+#    api. Full steps in auth.md -- the API will not start until those two are set.
+#    http://localhost:9000/if/flow/initial-setup/
 ```
 
 The API is then at `http://localhost:8080`. Interactive documentation is at
@@ -42,7 +48,8 @@ Check that the service can reach its dependencies:
 curl http://localhost:8080/health/ready
 ```
 
-`/health` needs no key. Everything under `/api/v1` does.
+`/health` needs no token. Everything under `/api/v1` does, and a group with it.
+See [auth.md](auth.md).
 
 ## Ports
 

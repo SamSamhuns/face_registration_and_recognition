@@ -59,15 +59,26 @@ frontend/
 No build step, no package manager, no framework. Edit a file and reload the page.
 The directory is bind-mounted, so nginx needs no restart.
 
-## The API key in the browser
+## Signing in
 
-Every page has an API key box in its header. The key goes to `localStorage` and rides
-on each request as `X-API-Key`.
+There is no key box. Opening any page with no token sends the browser to Authentik,
+and it comes back signed in; the header then shows the account name and a way out.
 
-A key in `localStorage` is readable by any script on that origin. That is the accepted
-cost of a shared key in a browser: the key is only as private as the page holding it.
-Anything needing real secrecy needs a session cookie the page cannot read, not a
-static key.
+`auth.js` runs the authorization code flow with PKCE. The browser makes a random
+`code_verifier`, sends only its SHA-256 hash to start the login, and reveals the
+verifier itself when it trades the returned code for a token. That is what lets a page
+containing no secret do this safely, and a page served to a browser can contain no
+secret.
+
+The token goes in `sessionStorage`, not `localStorage`: it dies with the tab rather
+than waiting on disk for the next person at that machine. It still survives moving
+between the three pages.
+
+Every request then carries `Authorization: Bearer`. A **401** means the session is
+gone or expired; a **403** means the account is signed in but not in a group that
+permits the action. The pages say different things for the two.
+
+See [auth.md](auth.md) for the Authentik side.
 
 ## Things that will catch you
 
@@ -82,6 +93,6 @@ third argument. Without it the part carries no content type and the API answers 
 pages call `stopCamera()` after a capture.
 
 **An `<img src>` carries no custom header.** It is a plain GET, so it cannot send the
-API key and comes back 401. The manage page fetches each face with `fetch()`, then
+bearer token and comes back 401. The manage page fetches each face with `fetch()`, then
 hands the element a `blob:` URL. Those URLs are revoked when the page changes, or the
 blobs stay in memory for the life of the tab.
