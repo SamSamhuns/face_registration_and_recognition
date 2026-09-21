@@ -25,6 +25,9 @@ services:
       # active detector/recogniser pair; both must be present in the Triton model repo
       FACE_DETECTOR: ${FACE_DETECTOR:-scrfd_10g}
       FACE_RECOGNIZER: ${FACE_RECOGNIZER:-arcface_r50}
+      # OIDC_ISSUER is the public URL and must match the token's `iss` exactly.
+      # The key fetch is a server-to-server call, so it goes over the compose network.
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-http://authentik-server:9000/application/o/face-api/jwks/}
     ports:
       - ${FASTAPI_SERVER_PORT:-8080}:8080
     volumes:
@@ -216,12 +219,69 @@ services:
       - ${REDIS_PORT:-6379}:6379
     volumes:
       - redis_data:/data
-    mem_limit: 96m
+    # ponytail: one redis, two logical databases -- db 0 for the person cache, db 1
+    # for authentik. Split into a second container if either starts to evict the other.
+    mem_limit: 256m
     healthcheck:
       test: [ "CMD", "redis-cli", "--raw", "incr", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 12
+
+  # --- identity provider -------------------------------------------------------
+  # authentik holds the users, groups and login flows. The API never sees a
+  # credential: it only verifies the tokens authentik signs. See docs/auth.md.
+  #
+  # authentik needs postgres; the application's own data stays in mariadb.
+  authentik-postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD}
+    volumes:
+      - authentik_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U authentik -d authentik" ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.2}
+    command: server
+    environment: &authentik_env
+      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
+      AUTHENTIK_POSTGRESQL__HOST: authentik-postgres
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_POSTGRES_PASSWORD}
+      AUTHENTIK_REDIS__HOST: redis-server
+      AUTHENTIK_REDIS__DB: 1
+      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+    ports:
+      - ${AUTHENTIK_PORT:-9000}:9000
+    depends_on:
+      authentik-postgres:
+        condition: service_healthy
+      redis-server:
+        condition: service_healthy
+    restart: unless-stopped
+
+  authentik-worker:
+    # Same image, different role: it runs migrations, sends email and rotates the
+    # signing certificates. No docker socket mounted, because this deployment uses
+    # no outposts -- the API verifies tokens itself.
+    image: ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.2}
+    command: worker
+    environment: *authentik_env
+    depends_on:
+      authentik-postgres:
+        condition: service_healthy
+      redis-server:
+        condition: service_healthy
+    restart: unless-stopped
 
   pytest:
     image: python:3.12
@@ -260,6 +320,7 @@ services:
       "
 
 volumes:
+  authentik_postgres:
   person_images:
   server_logs:
   milvus_data:
