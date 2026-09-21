@@ -28,10 +28,21 @@ dictConfig(log_cfg.model_dump())
 FASTAPI_SERVER_PORT = int(os.getenv("FASTAPI_SERVER_PORT", default="8080"))
 API_V1_PREFIX = "/api/v1"
 
-# Shared secret for every /api/v1 route. There is no default: the server refuses to
-# start without one, so the service is never accidentally open. Generate one with
-#   openssl rand -hex 32
-API_KEY = os.getenv("API_KEY", default="")
+# --- OIDC, provided by Authentik -----------------------------------------------
+# The API trusts exactly one issuer and one audience. Neither has a default, and the
+# server refuses to start without the issuer: a default issuer would mean accepting
+# tokens minted by somebody else's identity provider.
+# Both are shown in Authentik under Applications -> Providers -> your OAuth2 provider.
+OIDC_ISSUER = os.getenv("OIDC_ISSUER", default="")
+OIDC_CLIENT_ID = os.getenv("OIDC_CLIENT_ID", default="")
+# Where Authentik publishes the public half of its signing key. The discovery
+# document puts it directly under the issuer; overridable for an odd deployment.
+OIDC_JWKS_URL = os.getenv("OIDC_JWKS_URL", default=f"{OIDC_ISSUER.rstrip('/')}/jwks/" if OIDC_ISSUER else "")
+# Authentik group names, as they arrive in the `groups` claim. These are the two
+# roles this service has: an admin may change the registered population, an operator
+# may only identify against it.
+OIDC_ADMIN_GROUP = os.getenv("OIDC_ADMIN_GROUP", default="face-admin")
+OIDC_OPERATOR_GROUP = os.getenv("OIDC_OPERATOR_GROUP", default="face-operator")
 
 # CORS. Note allow_credentials=True is INVALID alongside a "*" origin -- browsers
 # reject that combination -- so credentials are only enabled for an explicit list.

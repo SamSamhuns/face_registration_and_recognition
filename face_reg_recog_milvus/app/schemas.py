@@ -108,3 +108,13 @@ class HealthStatus(BaseModel):
 
     status: str
     dependencies: dict[str, str] = Field(default_factory=dict)
+
+
+class AuthConfig(BaseModel):
+    """
+    What the browser needs to start a login. Both values are public by definition:
+    they travel in the query string of every authorize request.
+    """
+
+    issuer: str = Field(description="Authentik OIDC issuer for this application")
+    client_id: str = Field(description="public OAuth2 client id, no secret attached")

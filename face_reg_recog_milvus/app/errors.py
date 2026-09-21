@@ -53,7 +53,11 @@ class MultipleFacesError(AppError):
 
 
 class AuthenticationError(AppError):
-    """No API key, or the wrong one."""
+    """No access token, or one that does not verify. The caller is nobody."""
+
+
+class AuthorizationError(AppError):
+    """The caller is known, but their groups do not permit this action."""
 
 
 # --- resource state --------------------------------------------------------------
@@ -87,6 +91,7 @@ def status_for(exc: AppError) -> int:
 # instead of on the first error response.
 _STATUS_BY_ERROR: dict[type[AppError], int] = {
     AuthenticationError: status.HTTP_401_UNAUTHORIZED,
+    AuthorizationError: status.HTTP_403_FORBIDDEN,
     PersonNotFoundError: status.HTTP_404_NOT_FOUND,
     PersonAlreadyExistsError: status.HTTP_409_CONFLICT,
     NoFaceDetectedError: status.HTTP_422_UNPROCESSABLE_ENTITY,

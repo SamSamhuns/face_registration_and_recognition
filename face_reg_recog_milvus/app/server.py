@@ -20,10 +20,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import API_KEY, API_V1_PREFIX, CORS_ALLOW_CREDENTIALS, CORS_ALLOW_ORIGINS
+from app.config import API_V1_PREFIX, CORS_ALLOW_CREDENTIALS, CORS_ALLOW_ORIGINS, OIDC_CLIENT_ID, OIDC_ISSUER
 from app.deps import close_clients, create_clients
 from app.errors import AppError, status_for
-from app.routes import health, persons, recognitions
+from app.routes import auth, health, persons, recognitions
 from app.schemas import ErrorDetail
 
 logger = logging.getLogger("server")
@@ -40,10 +40,13 @@ async def lifespan(app: FastAPI):
     Anything created here reaches a request through app.state, which is what lets
     routes take it with Depends.
     """
-    # Refuse to start rather than serve an open API. This is in the lifespan, not
-    # in config, so importing the package for a script or a test needs no key.
-    if not API_KEY:
-        raise RuntimeError("API_KEY is not set. Generate one with: openssl rand -hex 32")
+    # Refuse to start rather than serve an open API. This is in the lifespan, not in
+    # config, so importing the package for a script or a test needs no identity provider.
+    if not OIDC_ISSUER or not OIDC_CLIENT_ID:
+        raise RuntimeError(
+            "OIDC_ISSUER and OIDC_CLIENT_ID are not set. Take both from the Authentik "
+            "OAuth2 provider for this application."
+        )
     app.state.clients = await create_clients()
     try:
         yield
@@ -70,6 +73,8 @@ def get_application(title: str = "Face Registration and Recognition") -> FastAPI
     )
 
     fastapi_app.include_router(health.router)
+    # Open, unlike the rest of /api/v1: the browser reads it before it has a token.
+    fastapi_app.include_router(auth.router, prefix=API_V1_PREFIX)
     fastapi_app.include_router(persons.router, prefix=API_V1_PREFIX)
     fastapi_app.include_router(recognitions.router, prefix=API_V1_PREFIX)
 

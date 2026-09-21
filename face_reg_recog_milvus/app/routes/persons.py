@@ -18,10 +18,13 @@ from app.db import persons as persons_db
 from app.deps import Clients, get_clients
 from app.errors import PersonNotFoundError, ValidationError
 from app.schemas import PersonCreate, PersonList, PersonRead
-from app.security import require_api_key
+from app.security import require_admin, require_operator
 from app.services import enroll, images
 
-router = APIRouter(prefix="/persons", tags=["persons"], dependencies=[Depends(require_api_key)])
+# Reading the registry is an operator's job, not something any Authentik account may
+# do: these rows are names, birthdates and face images of real people. The routes that
+# change the population ask for an admin on top, one by one below.
+router = APIRouter(prefix="/persons", tags=["persons"], dependencies=[Depends(require_operator)])
 logger = logging.getLogger("routes.persons")
 
 
@@ -67,6 +70,7 @@ async def person_form(
     status_code=status.HTTP_201_CREATED,
     response_model=PersonRead,
     summary="Register a person and their face",
+    dependencies=[Depends(require_admin)],
 )
 async def create_person(
     person: Annotated[PersonCreate, Depends(person_form)],
@@ -110,6 +114,7 @@ async def get_person(
     "/{person_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Unregister a person",
+    dependencies=[Depends(require_admin)],
 )
 async def delete_person(
     person_id: int,
