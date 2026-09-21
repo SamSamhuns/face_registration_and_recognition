@@ -5,12 +5,6 @@
 // CORS preflight, and no mixed content warning on an https page.
 
 const API = "/api/v1";
-const KEY_STORAGE = "faceApiKey";
-
-/** The API key this browser holds. Empty until somebody types one in. */
-function apiKey() {
-  return localStorage.getItem(KEY_STORAGE) || "";
-}
 
 // --------------------------------------------------------------------- requests
 
@@ -28,10 +22,15 @@ function readError(body, status) {
 
 /** Send a request. Returns parsed JSON, or null for 204. Throws on any error. */
 async function request(path, options = {}) {
-  const headers = { ...(options.headers || {}), "X-API-Key": apiKey() };
+  const headers = { ...(options.headers || {}), Authorization: `Bearer ${accessToken()}` };
   const response = await fetch(path, { ...options, headers });
+  // 401 and 403 are different answers and deserve different words. 401 means the
+  // token is missing or stale; 403 means it is fine and this person simply may not.
   if (response.status === 401) {
-    throw new Error("The API key is missing or wrong. Set it at the top of the page.");
+    throw new Error("You are not signed in, or the session has expired. Sign in again.");
+  }
+  if (response.status === 403) {
+    throw new Error("Your account is not in a group that permits this action.");
   }
   if (response.status === 204) return null;
   const body = await response.json().catch(() => null);
@@ -121,14 +120,14 @@ function stopCamera(stream) {
  * Fetch an image from a protected route and return an object URL for it.
  *
  * An <img src="..."> is a plain GET that carries no custom header, so it cannot
- * send the API key and would come back 401. Fetching it here, then handing the
+ * send the bearer token and would come back 401. Fetching it here, then handing the
  * element a blob: URL, is the way to show an image from an authenticated route.
  *
  * The caller should revokeObjectURL when the image is gone, or the blob stays in
  * memory for the life of the page.
  */
 async function fetchImageUrl(path) {
-  const response = await fetch(path, { headers: { "X-API-Key": apiKey() } });
+  const response = await fetch(path, { headers: { Authorization: `Bearer ${accessToken()}` } });
   if (!response.ok) throw new Error(`image request failed with status ${response.status}`);
   return URL.createObjectURL(await response.blob());
 }
@@ -144,29 +143,41 @@ function markActiveLink() {
 }
 
 /**
- * Put an API key box in the header of every page.
+ * Show who is signed in, with a way out. Or a way in, when nobody is.
  *
- * The key lives in localStorage, so it is readable by any script on this origin.
- * That is the accepted cost of a shared key in a browser: the key is only as
- * private as the page holding it. Anything that needs real secrecy needs a session
- * the browser cannot read, not a static key.
+ * The name is read out of the token without verifying it, which is fine for a label:
+ * faking it changes what this header says and nothing else. Every route is decided
+ * by the API, from the signature.
  */
-function addKeyControl() {
+function addAuthControl() {
   const header = document.querySelector("header");
   if (!header) return;
-  const input = document.createElement("input");
-  input.type = "password";
-  input.placeholder = "API key";
-  input.className = "apikey";
-  input.value = apiKey();
-  input.addEventListener("change", () => {
-    localStorage.setItem(KEY_STORAGE, input.value.trim());
-    location.reload();
-  });
-  header.appendChild(input);
+  const claims = tokenClaims();
+
+  if (!claims) {
+    const button = document.createElement("button");
+    button.textContent = "Sign in";
+    button.addEventListener("click", () => login());
+    header.append(button);
+    return;
+  }
+
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = claims.preferred_username || claims.email || claims.sub;
+  const button = document.createElement("button");
+  button.className = "secondary";
+  button.textContent = "Sign out";
+  button.addEventListener("click", logout);
+  header.append(who, button);
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   markActiveLink();
-  addKeyControl();
+  // A redirect back from Authentik arrives with ?code=. Handling it ends in a
+  // navigation, so there is nothing else to draw.
+  if (await completeLogin()) return;
+  addAuthControl();
+  // Nobody is signed in, so go and do that rather than showing a page of 401s.
+  if (!accessToken()) await login();
 });
